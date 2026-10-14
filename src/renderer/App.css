@@ -1,0 +1,83 @@
+/*
+ * @NOTE: Prepend a `~` to css file paths that are in your node_modules
+ *        See https://vite.dev/guide/features.html#css
+ */
+body {
+  position: relative;
+  color: rgb(107, 45, 18);
+  height: 100vh;
+  font-family: sans-serif;
+  overflow-y: hidden;
+  background-color: rgb(250, 239, 198);
+}
+
+button {
+  background-color: rgb(255, 253, 240);
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  font-size: 1.2rem;
+  box-shadow: 0px 8px 28px -6px rgba(24, 39, 75, 0.12),
+    0px 18px 88px -4px rgba(24, 39, 75, 0.14);
+  transition: all ease-in 0.1s;
+  cursor: pointer;
+}
+
+textarea {
+    background-color: rgba(255, 255, 255, 0.5);
+    border: 1px rgb(24, 24, 24) solid;
+    border-radius: 5px;
+    box-shadow: 0px 8px 28px -6px rgba(24, 39, 75, 0.12),
+    0px 18px 88px -4px rgba(24, 39, 75, 0.14);
+    font-family: inherit;
+    padding: 10px;
+    resize: vertical;
+}
+
+.editor-container {
+  position: relative;
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  min-height: 300px;
+  background-color: rgba(255, 255, 255, 0.5);
+  border: 1px rgb(24, 24, 24) solid;
+  border-radius: 5px;
+  box-shadow: 0px 8px 28px -6px rgba(24, 39, 75, 0.12),
+    0px 18px 88px -4px rgba(24, 39, 75, 0.14);
+}
+
+.editor-input {
+  min-height: 300px;
+  padding: 12px;
+  outline: none;
+}
+
+.editor-placeholder {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  color: rgba(107, 45, 18, 0.55);
+  pointer-events: none;
+}
+
+.editor-list-ul,
+.editor-list-ol {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.editor-list-item {
+  margin: 4px 0;
+}
+
+a {
+  text-decoration: none;
+  height: fit-content;
+  width: fit-content;
+  margin: 10px;
+}
+
+a:hover {
+  opacity: 1;
+  text-decoration: none;
+}
