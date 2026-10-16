@@ -1,5 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, DragEvent as ReactDragEvent, PointerEvent } from 'react';
+import type {
+  ComponentType,
+  CSSProperties,
+  DragEvent as ReactDragEvent,
+  PointerEvent,
+} from 'react';
 import { MemoryRouter as Router, Routes, Route } from 'react-router-dom';
 import '@fontsource/handlee/latin-400.css';
 import type {
@@ -15,8 +20,12 @@ import { quoteForDate } from './dailyQuotes';
 import type { DailyQuote } from './dailyQuotes';
 import './App.css';
 
-const Markdown = lazy(() =>
-  import('react-markdown').then((module) => ({ default: module.default })),
+const MarkdownEditor = lazy(() =>
+  import('./MarkdownEditor.js').then((module) => ({
+    default: module.default as unknown as ComponentType<
+      import('./MarkdownEditor.js').MarkdownEditorProps
+    >,
+  })),
 );
 
 const tabPlacements = ['header', 'left', 'right', 'footer'] as const;
@@ -113,7 +122,7 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
   }, [block.id, content, entryDate, readOnly]);
 
   return (
-    <label className={`block-field placement-${block.placement}`}>
+    <div className={`block-field placement-${block.placement}`}>
       {block.placement === 'center' && (
         <span className="block-label">
           {block.label}
@@ -122,15 +131,16 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
           </span>
         </span>
       )}
-      <textarea
-        value={content}
-        readOnly={readOnly}
-        style={{ fontSize: `${block.fontSizePx}px` }}
-        onChange={(event) => setContent(event.target.value)}
-        aria-label={block.label}
-        spellCheck
-      />
-    </label>
+      <Suspense fallback={<div className="lexical-note-loading">Loading editor…</div>}>
+        <MarkdownEditor
+          value={content}
+          label={block.label}
+          fontSizePx={block.fontSizePx}
+          readOnly={readOnly}
+          onChange={readOnly ? undefined : setContent}
+        />
+      </Suspense>
+    </div>
   );
 }
 
@@ -148,7 +158,12 @@ function PastNote({
       {showTitle && <h2>{block.label}</h2>}
       <div className="past-note-content" style={{ fontSize: `${block.fontSizePx}px` }}>
         <Suspense fallback={<p>Loading note…</p>}>
-          <Markdown>{content}</Markdown>
+          <MarkdownEditor
+            value={content}
+            label={block.label}
+            fontSizePx={block.fontSizePx}
+            readOnly
+          />
         </Suspense>
       </div>
     </article>
