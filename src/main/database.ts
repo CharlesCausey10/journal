@@ -21,6 +21,7 @@ export interface Block {
   fontSizePx: number;
   resetFrequency: ResetFrequency;
   templateContent: string;
+  previousEntryBlockId: number | null;
 }
 
 export type ResetFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never';
@@ -108,6 +109,7 @@ function hasCurrentSchema(connection: Database.Database) {
       'font_size_px',
       'reset_frequency',
       'template_content',
+      'previous_entry_block_id',
     ].every(
       (column) => blockColumns.has(column),
     ) &&
@@ -209,6 +211,12 @@ function initializeSchema(connection: Database.Database) {
                   WHERE placement = 'right' AND label = 'Tasks' AND template_content = ''`)
         .run(defaultTaskTemplate);
     }
+    if (blockColumns.has('is_active') && !blockColumns.has('previous_entry_block_id')) {
+      connection.exec(`
+        ALTER TABLE blocks ADD COLUMN previous_entry_block_id INTEGER
+          REFERENCES blocks(id) ON DELETE SET NULL;
+      `);
+    }
   }
   if (hasCurrentSchema(connection)) return;
 
@@ -232,6 +240,7 @@ function initializeSchema(connection: Database.Database) {
           reset_frequency IN ('daily', 'weekly', 'monthly', 'yearly', 'never')
         ),
         template_content TEXT NOT NULL DEFAULT '',
+        previous_entry_block_id INTEGER REFERENCES blocks(id) ON DELETE SET NULL,
         UNIQUE (placement, position)
       );
 
@@ -316,7 +325,8 @@ export function listBlocks(): Block[] {
     .prepare(
       `SELECT id, label, placement, position,
               font_size_px AS fontSizePx, reset_frequency AS resetFrequency,
-              template_content AS templateContent
+              template_content AS templateContent,
+              previous_entry_block_id AS previousEntryBlockId
        FROM blocks WHERE is_active = 1 ORDER BY placement, position`,
     )
     .all() as Block[];
@@ -385,7 +395,8 @@ export function addBlock(label: string, placement: BlockPlacement): Block {
     .prepare(`SELECT id, label, placement, position,
                      font_size_px AS fontSizePx,
                      reset_frequency AS resetFrequency,
-                     template_content AS templateContent
+                     template_content AS templateContent,
+                     previous_entry_block_id AS previousEntryBlockId
               FROM blocks WHERE id = ?`)
     .get(Number(result.lastInsertRowid)) as Block;
 }
@@ -397,6 +408,7 @@ export function updateBlockSettings(
     fontSizePx?: number;
     resetFrequency?: ResetFrequency;
     templateContent?: string;
+    previousEntryBlockId?: number | null;
   },
   anchorDate = localDateString(new Date()),
 ): Block {
@@ -409,7 +421,8 @@ export function updateBlockSettings(
     .prepare(
       `SELECT id, label, reset_frequency AS resetFrequency,
               font_size_px AS fontSizePx,
-              template_content AS templateContent
+              template_content AS templateContent,
+              previous_entry_block_id AS previousEntryBlockId
        FROM blocks WHERE id = ? AND is_active = 1`,
     )
     .get(id) as
@@ -419,6 +432,7 @@ export function updateBlockSettings(
         resetFrequency: ResetFrequency;
         fontSizePx: number;
         templateContent: string;
+        previousEntryBlockId: number | null;
       }
     | undefined;
   if (!block) throw new Error('Panel is unavailable');
@@ -446,6 +460,27 @@ export function updateBlockSettings(
   if (typeof templateContent !== 'string' || templateContent.length > 20_000) {
     throw new RangeError('Template content must be 20,000 characters or fewer');
   }
+  const previousEntryBlockId =
+    settings.previousEntryBlockId === undefined
+      ? block.previousEntryBlockId
+      : settings.previousEntryBlockId;
+  if (
+    previousEntryBlockId !== null &&
+    (!Number.isInteger(previousEntryBlockId) || previousEntryBlockId === id)
+  ) {
+    throw new TypeError('Invalid previous-entry source block');
+  }
+  if (previousEntryBlockId !== null) {
+    const sourceBlock = connection
+      .prepare(
+        `SELECT previous_entry_block_id AS previousEntryBlockId
+         FROM blocks WHERE id = ? AND is_active = 1`,
+      )
+      .get(previousEntryBlockId) as { previousEntryBlockId: number | null } | undefined;
+    if (!sourceBlock || sourceBlock.previousEntryBlockId !== null) {
+      throw new Error('The source must be an active, editable block');
+    }
+  }
 
   const update = connection.transaction(() => {
     if (settings.resetFrequency && settings.resetFrequency !== block.resetFrequency) {
@@ -461,25 +496,36 @@ export function updateBlockSettings(
     connection
       .prepare(
         `UPDATE blocks SET label = ?, font_size_px = ?, reset_frequency = ?,
-         template_content = ? WHERE id = ?`,
+         template_content = ?, previous_entry_block_id = ? WHERE id = ?`,
       )
-      .run(label, fontSizePx, resetFrequency, templateContent, id);
+      .run(label, fontSizePx, resetFrequency, templateContent, previousEntryBlockId, id);
   });
   update();
   return connection
     .prepare(`SELECT id, label, placement, position,
                      font_size_px AS fontSizePx,
                      reset_frequency AS resetFrequency,
-                     template_content AS templateContent
+                     template_content AS templateContent,
+                     previous_entry_block_id AS previousEntryBlockId
               FROM blocks WHERE id = ?`)
     .get(id) as Block;
 }
 
 export function removeBlock(id: number): boolean {
   if (!Number.isInteger(id)) throw new TypeError('Invalid panel id');
-  return db()
-    .prepare('UPDATE blocks SET is_active = 0 WHERE id = ? AND is_active = 1')
-    .run(id).changes > 0;
+  const connection = db();
+  const remove = connection.transaction(() => {
+    const result = connection
+      .prepare('UPDATE blocks SET is_active = 0 WHERE id = ? AND is_active = 1')
+      .run(id);
+    if (result.changes > 0) {
+      connection
+        .prepare('UPDATE blocks SET previous_entry_block_id = NULL WHERE previous_entry_block_id = ?')
+        .run(id);
+    }
+    return result.changes > 0;
+  });
+  return remove();
 }
 
 export function moveBlock(id: number, placement: BlockPlacement, position: number) {
@@ -558,7 +604,9 @@ export function updateLayoutSize(
   if (!Number.isFinite(sizeValue)) throw new TypeError('Invalid layout size');
   const connection = db();
   if (placement === 'center') {
-    if (!Number.isInteger(blockId)) throw new TypeError('Center block id is required');
+    if (blockId === undefined || !Number.isInteger(blockId)) {
+      throw new TypeError('Center block id is required');
+    }
     const block = connection
       .prepare("SELECT id FROM blocks WHERE id = ? AND placement = 'center'")
       .get(blockId);
@@ -578,13 +626,14 @@ export function updateLayoutSize(
     left: 'left_size_px',
     right: 'right_size_px',
   };
+  const nonCenterPlacement = placement as Exclude<BlockPlacement, 'center'>;
   const bounds =
     placement === 'header' || placement === 'footer'
       ? { min: 32, max: 240 }
       : { min: 120, max: 360 };
   const size = Math.max(bounds.min, Math.min(bounds.max, sizeValue));
   connection
-    .prepare(`UPDATE user_settings SET ${sizeField[placement]} = ? WHERE id = 1`)
+    .prepare(`UPDATE user_settings SET ${sizeField[nonCenterPlacement]} = ? WHERE id = 1`)
     .run(size);
   return size;
 }
@@ -596,7 +645,26 @@ export function listEntriesForDate(entryDate: string): Entry[] {
      FROM entries WHERE block_id = ? AND entry_date = ?
      ORDER BY updated_at DESC LIMIT 1`,
   );
-  return listBlocks().flatMap((block) => {
+  const blocks = listBlocks();
+  const blocksById = new Map(blocks.map((block) => [block.id, block]));
+  const previousEntryForBlock = db().prepare(
+    `SELECT id, block_id AS blockId, entry_date AS entryDate, content,
+            created_at AS createdAt, updated_at AS updatedAt
+     FROM entries
+     WHERE block_id = ? AND entry_date < ? AND length(trim(content)) > 0
+     ORDER BY entry_date DESC, updated_at DESC LIMIT 1`,
+  );
+  return blocks.flatMap((block) => {
+    if (block.previousEntryBlockId !== null) {
+      const sourceBlock = blocksById.get(block.previousEntryBlockId);
+      if (!sourceBlock || sourceBlock.previousEntryBlockId !== null) return [];
+      const previousEntry = previousEntryForBlock.get(
+        sourceBlock.id,
+        periodKey(entryDate, sourceBlock.resetFrequency),
+      ) as Entry | undefined;
+      return previousEntry ? [{ ...previousEntry, blockId: block.id }] : [];
+    }
+
     const entry = entryForBlock.get(
       block.id,
       periodKey(entryDate, block.resetFrequency),

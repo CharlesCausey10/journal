@@ -49,7 +49,7 @@ const colorSchemeOptions: { value: ColorScheme; label: string }[] = [
   { value: 'sage', label: 'Quiet sage' },
   { value: 'lavender', label: 'Pale lavender' },
   { value: 'midnight', label: 'Midnight blue' },
-  { value: 'charcoal', label: 'Soft charcoal' },
+  { value: 'charcoal', label: 'Moss charcoal' },
 ];
 
 const fontStacks: Record<FontFamily, string> = {
@@ -84,7 +84,7 @@ interface BlockEditorProps {
 
 function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
   const [content, setContent] = useState(
-    entry?.content ?? block.templateContent,
+    entry?.content ?? (block.previousEntryBlockId === null ? block.templateContent : ''),
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -180,11 +180,13 @@ function PastNote({
 
 function TemplatePane({
   block,
+  linkedSourceLabel,
   onSave,
   onDragStart,
   onOpenSettings,
 }: {
   block: Block;
+  linkedSourceLabel?: string;
   onSave: (content: string) => void;
   onDragStart: (event: ReactDragEvent<HTMLSpanElement>) => void;
   onOpenSettings: (blockId: number) => void;
@@ -221,16 +223,22 @@ function TemplatePane({
         </button>
       </div>
       <div className="layout-template-editor">
-        <Suspense fallback={null}>
-          <MarkdownEditor
-            value={content}
-            label={`${block.label} template`}
-            fontSizePx={block.fontSizePx}
-            readOnly={false}
-            placeholder="Default content..."
-            onChange={changeContent}
-          />
-        </Suspense>
+        {block.previousEntryBlockId !== null ? (
+          <div className="linked-block-notice">
+            Shows the most recent earlier entry from “{linkedSourceLabel ?? 'another block'}”. This block is read-only.
+          </div>
+        ) : (
+          <Suspense fallback={null}>
+            <MarkdownEditor
+              value={content}
+              label={`${block.label} template`}
+              fontSizePx={block.fontSizePx}
+              readOnly={false}
+              placeholder="Default content..."
+              onChange={changeContent}
+            />
+          </Suspense>
+        )}
       </div>
     </div>
   );
@@ -393,7 +401,8 @@ function Home() {
   const sizeSaveTimers = useRef(new Map<string, number>());
   const [entryDate, setEntryDate] = useState(today());
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
-  const isReadOnlyDate = entryDate < today();
+  const todayDate = today();
+  const isReadOnlyDate = entryDate < todayDate;
 
   useEffect(() => {
     let isCurrent = true;
@@ -411,9 +420,8 @@ function Home() {
   const changeDateByDays = (days: number) => {
     const nextDate = new Date(`${entryDate}T00:00:00`);
     nextDate.setDate(nextDate.getDate() + days);
-    setEntryDate(
-      `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`,
-    );
+    const nextDateString = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
+    if (nextDateString <= todayDate) setEntryDate(nextDateString);
   };
 
   useEffect(
@@ -611,6 +619,7 @@ function Home() {
       resetFrequency?: ResetFrequency;
       templateContent?: string;
       label?: string;
+      previousEntryBlockId?: number | null;
     },
   ) => {
     try {
@@ -625,7 +634,7 @@ function Home() {
           block.id === blockId ? updatedBlock : block,
         ),
       );
-      if (update.resetFrequency) {
+      if (update.resetFrequency || update.previousEntryBlockId !== undefined) {
         const entries = await window.electron.entries.listForDate(entryDate);
         setEntriesByBlock(
           new Map(entries.map((entry) => [entry.blockId, entry])),
@@ -663,7 +672,7 @@ function Home() {
       sage: 'rgb(231, 239, 229)',
       lavender: 'rgb(239, 235, 246)',
       midnight: 'rgb(23, 29, 43)',
-      charcoal: 'rgb(32, 33, 32)',
+      charcoal: 'rgb(30, 39, 34)',
     };
     document.body.style.backgroundColor = pageBackgrounds[settings.colorScheme];
   }, [settings.colorScheme]);
@@ -779,6 +788,7 @@ function Home() {
           <TemplatePane
             key={`template-${active.id}`}
             block={active}
+            linkedSourceLabel={blocks.find((block) => block.id === active.previousEntryBlockId)?.label}
             onSave={(templateContent) => void updatePanelSettings(active.id, { templateContent })}
             onOpenSettings={() => openPanelSettings(active)}
             onDragStart={(event) => {
@@ -792,11 +802,11 @@ function Home() {
           ) : null
         ) : active ? (
           <BlockEditor
-                  key={`${active.id}-${entryDate}-${activeEntry?.id ?? 'template'}-${activeEntry ? '' : active.templateContent}`}
+                  key={`${active.id}-${entryDate}-${activeEntry?.id ?? 'template'}-${active.previousEntryBlockId ?? 'normal'}-${activeEntry ? '' : active.templateContent}`}
             block={active}
             entry={activeEntry}
             entryDate={entryDate}
-            readOnly={isReadOnlyDate}
+            readOnly={active.previousEntryBlockId !== null}
           />
         ) : null}
         {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'header' && (
@@ -817,6 +827,11 @@ function Home() {
 
   const centerBlocks = blocksForDate('center');
   const panelSettingsBlock = blocks.find((block) => block.id === selectedPanelSettingsId);
+  const previousEntrySources = blocks.filter(
+    (block) =>
+      block.id !== panelSettingsBlock?.id &&
+      block.previousEntryBlockId === null,
+  );
   if (loading) return null;
 
   return (
@@ -860,7 +875,7 @@ function Home() {
               {centerBlocks.map((block, index) => (
                 <div
                   className={`center-pane-wrap${editingLayout ? ' layout-edit-pane' : ''}`}
-                  key={editingLayout ? `template-${block.id}` : `${block.id}-${entryDate}-${entriesByBlock.get(block.id)?.id ?? 'template'}-${entriesByBlock.has(block.id) ? '' : block.templateContent}`}
+                  key={editingLayout ? `template-${block.id}` : `${block.id}-${entryDate}-${block.previousEntryBlockId ?? 'normal'}-${entriesByBlock.get(block.id)?.id ?? 'template'}-${entriesByBlock.has(block.id) ? '' : block.templateContent}`}
                   style={{ flexGrow: settings.centerSizes[block.id] ?? 1, flexShrink: 1, flexBasis: 0 }}
                   onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
                   onDrop={editingLayout ? (event) => dropPanel(event, 'center', index) : undefined}
@@ -868,6 +883,7 @@ function Home() {
                   {editingLayout ? (
                     <TemplatePane
                       block={block}
+                      linkedSourceLabel={blocks.find((source) => source.id === block.previousEntryBlockId)?.label}
                       onSave={(templateContent) => void updatePanelSettings(block.id, { templateContent })}
                       onOpenSettings={() => openPanelSettings(block)}
                       onDragStart={(event) => {
@@ -888,7 +904,7 @@ function Home() {
                       block={block}
                       entry={entriesByBlock.get(block.id)}
                       entryDate={entryDate}
-                      readOnly={false}
+                      readOnly={block.previousEntryBlockId !== null}
                     />
                   )}
                   {settings.centerOrientation !== 'grid' && index < centerBlocks.length - 1 && (
@@ -959,15 +975,37 @@ function Home() {
                     <button type="submit">Save title</button>
                   </form>
                   <label>
-                    Reset text
-                    <select value={panelSettingsBlock.resetFrequency} onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, { resetFrequency: event.target.value as ResetFrequency })}>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="yearly">Yearly</option>
-                      <option value="never">Never</option>
+                    Show previous entry from
+                    <select
+                      value={panelSettingsBlock.previousEntryBlockId ?? ''}
+                      onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, {
+                        previousEntryBlockId: event.target.value ? Number(event.target.value) : null,
+                      })}
+                    >
+                      <option value="">None — editable block</option>
+                      {previousEntrySources.map((sourceBlock) => (
+                        <option key={sourceBlock.id} value={sourceBlock.id}>
+                          {sourceBlock.label} ({sectionTitles[sourceBlock.placement]})
+                        </option>
+                      ))}
                     </select>
                   </label>
+                  {panelSettingsBlock.previousEntryBlockId === null ? (
+                    <label>
+                      Reset text
+                      <select value={panelSettingsBlock.resetFrequency} onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, { resetFrequency: event.target.value as ResetFrequency })}>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="never">Never</option>
+                      </select>
+                    </label>
+                  ) : (
+                    <p className="dialog-help">
+                      This panel shows the source block’s most recent saved entry before the entry currently showing. Its own saved text is hidden while linked.
+                    </p>
+                  )}
                   <label>
                     Text size: {panelSettingsBlock.fontSizePx}px
                     <input type="range" min="12" max="36" value={panelSettingsBlock.fontSizePx} onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, { fontSizePx: Number(event.target.value) })} />
@@ -1024,8 +1062,10 @@ function Home() {
               Layout change could not be saved
             </span>
               )}
-              {isReadOnlyDate && (
-                <span className="readonly-date-note">Read only</span>
+              {entryDate !== todayDate && (
+                <button type="button" onClick={() => setEntryDate(todayDate)}>
+                  Today
+                </button>
               )}
               <div className="date-selector">
                 <button
@@ -1041,11 +1081,15 @@ function Home() {
                   type="date"
                   aria-label="Journal date"
                   value={entryDate}
-                  onChange={(event) => setEntryDate(event.target.value)}
+                  max={todayDate}
+                  onChange={(event) => {
+                    if (event.target.value <= todayDate) setEntryDate(event.target.value);
+                  }}
                 />
                 <button
                   type="button"
                   aria-label="Next day"
+                  disabled={entryDate >= todayDate}
                   onClick={() => changeDateByDays(1)}
                 >
                   <svg viewBox="0 0 20 20" aria-hidden="true">

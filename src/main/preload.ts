@@ -73,6 +73,7 @@ const electronHandler = {
         fontSizePx?: number;
         resetFrequency?: ResetFrequency;
         templateContent?: string;
+        previousEntryBlockId?: number | null;
       },
       anchorDate: string,
     ): Promise<Block> {

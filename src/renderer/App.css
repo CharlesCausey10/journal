@@ -60,58 +60,58 @@ body {
 }
 
 .journal-page.theme-paper {
-  --theme-page: rgb(250, 239, 198);
+  --theme-page: rgb(243, 220, 154);
   --theme-ink: rgb(107, 45, 18);
   --theme-ink-rgb: 107, 45, 18;
   --theme-panel: rgba(255, 255, 255, 0.14);
-  --theme-input: rgba(255, 255, 255, 0.58);
-  --theme-editor: rgba(255, 255, 255, 0.5);
-  --theme-dialog: rgb(250, 239, 218);
-  --theme-highlight: rgba(255, 253, 240, 0.9);
-  --theme-control: rgb(255, 253, 240);
-  --theme-control-hover: rgb(247, 235, 202);
+  --theme-input: rgba(255, 250, 226, 0.58);
+  --theme-editor: rgba(255, 249, 222, 0.5);
+  --theme-dialog: rgb(244, 225, 178);
+  --theme-highlight: rgb(249, 231, 186);
+  --theme-control: rgb(247, 229, 184);
+  --theme-control-hover: rgb(233, 207, 143);
   --theme-preview: rgba(126, 94, 53, 0.08);
 }
 
 .journal-page.theme-stone {
-  --theme-page: rgb(232, 236, 239);
+  --theme-page: rgb(205, 216, 224);
   --theme-ink: rgb(55, 65, 75);
   --theme-ink-rgb: 55, 65, 75;
   --theme-panel: rgba(255, 255, 255, 0.2);
-  --theme-input: rgba(255, 255, 255, 0.7);
-  --theme-editor: rgba(255, 255, 255, 0.62);
-  --theme-dialog: rgb(245, 247, 249);
-  --theme-highlight: rgba(255, 255, 255, 0.95);
-  --theme-control: rgb(255, 255, 255);
-  --theme-control-hover: rgb(224, 231, 236);
+  --theme-input: rgba(239, 245, 249, 0.68);
+  --theme-editor: rgba(235, 242, 248, 0.58);
+  --theme-dialog: rgb(218, 228, 235);
+  --theme-highlight: rgb(225, 235, 241);
+  --theme-control: rgb(220, 231, 238);
+  --theme-control-hover: rgb(193, 210, 221);
   --theme-preview: rgba(75, 90, 105, 0.08);
 }
 
 .journal-page.theme-sage {
-  --theme-page: rgb(231, 239, 229);
+  --theme-page: rgb(196, 216, 189);
   --theme-ink: rgb(53, 73, 58);
   --theme-ink-rgb: 53, 73, 58;
   --theme-panel: rgba(255, 255, 255, 0.2);
-  --theme-input: rgba(255, 255, 255, 0.68);
-  --theme-editor: rgba(255, 255, 255, 0.6);
-  --theme-dialog: rgb(244, 248, 241);
-  --theme-highlight: rgba(250, 255, 249, 0.95);
-  --theme-control: rgb(250, 255, 249);
-  --theme-control-hover: rgb(221, 233, 218);
+  --theme-input: rgba(239, 248, 232, 0.66);
+  --theme-editor: rgba(236, 246, 229, 0.56);
+  --theme-dialog: rgb(211, 228, 203);
+  --theme-highlight: rgb(220, 236, 211);
+  --theme-control: rgb(215, 232, 205);
+  --theme-control-hover: rgb(184, 210, 172);
   --theme-preview: rgba(74, 103, 79, 0.08);
 }
 
 .journal-page.theme-lavender {
-  --theme-page: rgb(239, 235, 246);
+  --theme-page: rgb(211, 197, 230);
   --theme-ink: rgb(72, 62, 83);
   --theme-ink-rgb: 72, 62, 83;
   --theme-panel: rgba(255, 255, 255, 0.22);
-  --theme-input: rgba(255, 255, 255, 0.72);
-  --theme-editor: rgba(255, 255, 255, 0.62);
-  --theme-dialog: rgb(248, 245, 251);
-  --theme-highlight: rgba(255, 252, 255, 0.95);
-  --theme-control: rgb(255, 252, 255);
-  --theme-control-hover: rgb(230, 222, 240);
+  --theme-input: rgba(246, 239, 252, 0.68);
+  --theme-editor: rgba(243, 235, 250, 0.58);
+  --theme-dialog: rgb(226, 216, 239);
+  --theme-highlight: rgb(233, 224, 244);
+  --theme-control: rgb(228, 218, 241);
+  --theme-control-hover: rgb(203, 187, 225);
   --theme-preview: rgba(94, 79, 111, 0.08);
 }
 
@@ -132,16 +132,16 @@ body {
 
 .journal-page.theme-charcoal {
   color-scheme: dark;
-  --theme-page: rgb(32, 33, 32);
+  --theme-page: rgb(30, 39, 34);
   --theme-ink: rgb(232, 233, 230);
   --theme-ink-rgb: 232, 233, 230;
   --theme-panel: rgba(255, 255, 255, 0.055);
-  --theme-input: rgba(255, 255, 255, 0.1);
-  --theme-editor: rgba(255, 255, 255, 0.045);
-  --theme-dialog: rgb(42, 44, 42);
-  --theme-highlight: rgb(59, 62, 59);
-  --theme-control: rgb(54, 57, 54);
-  --theme-control-hover: rgb(69, 73, 69);
+  --theme-input: rgba(218, 236, 222, 0.1);
+  --theme-editor: rgba(218, 236, 222, 0.045);
+  --theme-dialog: rgb(40, 50, 44);
+  --theme-highlight: rgb(54, 68, 58);
+  --theme-control: rgb(49, 62, 53);
+  --theme-control-hover: rgb(63, 79, 66);
   --theme-preview: rgba(255, 255, 255, 0.045);
 }
 
@@ -329,6 +329,15 @@ body {
   background: var(--theme-control-hover);
 }
 
+.journal-page .date-selector button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.journal-page .date-selector button:disabled:hover {
+  background: transparent;
+}
+
 .date-selector button svg {
   width: 16px;
   height: 16px;
@@ -349,14 +358,6 @@ body {
   color: var(--theme-ink);
   font: inherit;
   font-size: 0.85rem;
-}
-
-.readonly-date-note {
-  flex: 0 0 auto;
-  margin-right: 4px;
-  color: var(--theme-ink);
-  font-size: 0.75rem;
-  font-weight: 700;
 }
 
 .daily-quote {
@@ -435,6 +436,16 @@ body {
 }
 .layout-template-editor > .lexical-note,
 .layout-template-editor > .lexical-note-loading { flex: 1 1 auto; }
+.linked-block-notice {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(var(--theme-ink-rgb), 0.32);
+  border-radius: 5px;
+  background: var(--theme-editor);
+  color: var(--theme-ink);
+  font-size: 0.9rem;
+}
 .layout-template-heading {
   display: flex;
   flex: 0 0 auto;
@@ -1352,7 +1363,7 @@ body {
 }
 
 .scheme-name-preview-charcoal {
-  background: #202120;
+  background: #1e2722;
   color: #e8e9e6;
 }
 

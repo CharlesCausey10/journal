@@ -117,7 +117,10 @@ ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
     ('templateContent' in settings &&
       (typeof settings.templateContent !== 'string' ||
         settings.templateContent.length > 20_000)) ||
-    !('label' in settings || 'fontSizePx' in settings || 'resetFrequency' in settings || 'templateContent' in settings)
+    ('previousEntryBlockId' in settings &&
+      settings.previousEntryBlockId !== null &&
+      typeof settings.previousEntryBlockId !== 'number') ||
+    !('label' in settings || 'fontSizePx' in settings || 'resetFrequency' in settings || 'templateContent' in settings || 'previousEntryBlockId' in settings)
   ) {
     throw new TypeError('Invalid panel settings');
   }
@@ -131,6 +134,10 @@ ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
     templateContent:
       'templateContent' in settings
         ? settings.templateContent as string
+        : undefined,
+    previousEntryBlockId:
+      'previousEntryBlockId' in settings
+        ? settings.previousEntryBlockId as number | null
         : undefined,
   }, input.anchorDate);
 });

@@ -107,9 +107,10 @@ export default function MarkdownEditor({
             <ContentEditable
               className="lexical-note-content"
               aria-label={label}
+              aria-placeholder={placeholder ?? label}
               aria-readonly={readOnly}
               spellCheck={!readOnly}
-          placeholder={placeholder ? <div className="lexical-note-placeholder">{placeholder}</div> : null}
+          placeholder={() => (placeholder ? <div className="lexical-note-placeholder">{placeholder}</div> : null)}
             />
           }
           ErrorBoundary={LexicalErrorBoundary}
