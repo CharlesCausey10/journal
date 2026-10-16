@@ -29,6 +29,12 @@ jobs:
           npm run postinstall
           npm run build
 
+      - name: Check TypeScript
+        run: npm exec tsc -- --noEmit
+
+      - name: Verify database migration and application tests
+        run: npm test -- --runInBand
+
       - name: Publish on Windows
         if: runner.os == 'Windows'
         env:

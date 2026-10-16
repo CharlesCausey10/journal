@@ -15,13 +15,13 @@ import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import startAutoUpdates from './updates';
+import initializeWithRecovery from './database-recovery';
 import {
   closeDatabase,
   addBlock,
   deleteEntry,
   getLayoutSettings,
   getEntry,
-  initializeDatabase,
   listEntries,
   listEntriesForDate,
   listBlocks,
@@ -46,6 +46,12 @@ if (!app.isPackaged) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+app.on('second-instance', () => {
+  if (mainWindow?.isMinimized()) mainWindow.restore();
+  mainWindow?.focus();
+});
 type SavedWindowState = {
   x: number;
   y: number;
@@ -425,7 +431,11 @@ function onActivate() {
 app
   .whenReady()
   .then(async () => {
-    initializeDatabase();
+    if (!hasInstanceLock) return;
+    if (!(await initializeWithRecovery())) {
+      app.quit();
+      return;
+    }
     await createWindow();
     startAutoUpdates();
     app.on('activate', onActivate);

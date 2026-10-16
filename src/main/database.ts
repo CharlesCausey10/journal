@@ -1,9 +1,8 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { defaultPanelSizes, layoutSizeLimits } from '../shared/layout';
+import { openProtectedDatabase } from './database-backups';
 
 export interface Entry {
   id: string;
@@ -76,7 +75,7 @@ const defaultTaskTemplate = [
 
 function hasCurrentSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
-  if (version !== 1) return false;
+  if (version !== 1 && version !== 2) return false;
 
   const columnsFor = (table: string) =>
     new Set(
@@ -133,8 +132,17 @@ function hasCurrentSchema(connection: Database.Database) {
   );
 }
 
-function initializeSchema(connection: Database.Database) {
+export function initializeSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
+  const tables = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+  const isEmpty = version === 0 && tables.length === 0;
+  if (!isEmpty && version !== 1 && version !== 2) {
+    throw new Error('This database version is not supported. Use a compatible Journal release.');
+  }
+  if (version === 2) {
+    if (!hasCurrentSchema(connection)) throw new Error('The database schema is damaged or unsupported.');
+    return;
+  }
   if (version === 1) {
     const settingsDefinition = connection
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_settings'")
@@ -223,15 +231,14 @@ function initializeSchema(connection: Database.Database) {
       `);
     }
   }
-  if (hasCurrentSchema(connection)) return;
+  if (hasCurrentSchema(connection)) {
+    connection.pragma('user_version = 2');
+    return;
+  }
+  if (!isEmpty) throw new Error('The existing database could not be migrated safely.');
 
   const initialize = connection.transaction(() => {
     connection.exec(`
-      DROP TABLE IF EXISTS entries;
-      DROP TABLE IF EXISTS blocks;
-      DROP TABLE IF EXISTS user_settings;
-      DROP TABLE IF EXISTS layout_settings;
-
       CREATE TABLE blocks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         label TEXT NOT NULL,
@@ -291,19 +298,18 @@ function initializeSchema(connection: Database.Database) {
       .prepare(`UPDATE blocks SET template_content = ?
                 WHERE placement = 'right' AND label = 'Tasks'`)
       .run(defaultTaskTemplate);
-    connection.pragma('user_version = 1');
+    connection.pragma('user_version = 2');
   });
   initialize();
 }
 
-export function initializeDatabase() {
-  const directory = app.getPath('userData');
-  fs.mkdirSync(directory, { recursive: true });
-  const connection = new Database(path.join(directory, 'journal.sqlite'));
-  connection.pragma('journal_mode = WAL');
-  connection.pragma('foreign_keys = ON');
-  initializeSchema(connection);
-  database = connection;
+export async function initializeDatabase() {
+  if (database) return;
+  database = await openProtectedDatabase({
+    directory: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    migrate: initializeSchema,
+  });
 }
 
 function db() {
