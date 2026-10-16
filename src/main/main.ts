@@ -14,6 +14,26 @@ import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import startAutoUpdates from './updates';
+import {
+  closeDatabase,
+  addBlock,
+  deleteEntry,
+  getLayoutSettings,
+  getEntry,
+  initializeDatabase,
+  listEntries,
+  listEntriesForDate,
+  listBlocks,
+  moveBlock,
+  updateLayoutSize,
+  updateCenterOrientation,
+  removeBlock,
+  setFontFamily,
+  setColorScheme,
+  updateBlockSettings,
+  saveEntry,
+  type SaveEntryInput,
+} from './database';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -21,6 +41,160 @@ ipcMain.on('ipc-example', async (event, arg) => {
   const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
   console.log(msgTemplate(arg));
   event.reply('ipc-example', msgTemplate('pong'));
+});
+
+ipcMain.handle('entries:list', () => listEntries());
+ipcMain.handle('entries:list-for-date', (_event, entryDate: unknown) => {
+  if (typeof entryDate !== 'string') {
+    throw new TypeError('Entry date must be a string');
+  }
+  return listEntriesForDate(entryDate);
+});
+ipcMain.handle('blocks:list', () => listBlocks());
+ipcMain.handle('blocks:add', (_event, input: unknown) => {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('label' in input) ||
+    !('placement' in input) ||
+    typeof input.label !== 'string' ||
+    typeof input.placement !== 'string' ||
+    !['header', 'footer', 'left', 'right', 'center'].includes(input.placement)
+  ) {
+    throw new TypeError('Invalid panel');
+  }
+  return addBlock(
+    input.label,
+    input.placement as 'header' | 'footer' | 'left' | 'right' | 'center',
+  );
+});
+ipcMain.handle('blocks:remove', (_event, id: unknown) => {
+  if (typeof id !== 'number') throw new TypeError('Invalid panel id');
+  return removeBlock(id);
+});
+ipcMain.handle('blocks:move', (_event, input: unknown) => {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('id' in input) ||
+    !('placement' in input) ||
+    !('position' in input) ||
+    typeof input.id !== 'number' ||
+    typeof input.placement !== 'string' ||
+    !['header', 'footer', 'left', 'right', 'center'].includes(input.placement) ||
+    typeof input.position !== 'number'
+  ) {
+    throw new TypeError('Invalid panel move');
+  }
+  return moveBlock(
+    input.id,
+    input.placement as 'header' | 'footer' | 'left' | 'right' | 'center',
+    input.position,
+  );
+});
+ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('id' in input) ||
+    !('settings' in input) ||
+    !('anchorDate' in input) ||
+    typeof input.id !== 'number' ||
+    typeof input.anchorDate !== 'string' ||
+    !input.settings ||
+    typeof input.settings !== 'object'
+  ) {
+    throw new TypeError('Invalid panel settings');
+  }
+  const settings = input.settings;
+  if (
+    ('fontSizePx' in settings && typeof settings.fontSizePx !== 'number') ||
+    ('resetFrequency' in settings &&
+      (typeof settings.resetFrequency !== 'string' ||
+        !['daily', 'weekly', 'monthly', 'yearly', 'never'].includes(settings.resetFrequency))) ||
+    !('fontSizePx' in settings || 'resetFrequency' in settings)
+  ) {
+    throw new TypeError('Invalid panel settings');
+  }
+  return updateBlockSettings(input.id, {
+    fontSizePx: 'fontSizePx' in settings ? settings.fontSizePx as number : undefined,
+    resetFrequency:
+      'resetFrequency' in settings
+        ? settings.resetFrequency as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never'
+        : undefined,
+  }, input.anchorDate);
+});
+ipcMain.handle('layout:set-size', (_event, input: unknown) => {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('placement' in input) ||
+    !('sizeValue' in input) ||
+    typeof input.placement !== 'string' ||
+    !['header', 'footer', 'left', 'right', 'center'].includes(input.placement) ||
+    typeof input.sizeValue !== 'number' ||
+    ('blockId' in input &&
+      input.blockId !== undefined &&
+      typeof input.blockId !== 'number')
+  ) {
+    throw new TypeError('Invalid layout size');
+  }
+  return updateLayoutSize(
+    input.placement as 'header' | 'footer' | 'left' | 'right' | 'center',
+    input.sizeValue,
+    'blockId' in input ? input.blockId as number : undefined,
+  );
+});
+ipcMain.handle('layout:get', () => getLayoutSettings());
+ipcMain.handle('layout:set-center-orientation', (_event, value: unknown) => {
+  if (value !== 'horizontal' && value !== 'vertical' && value !== 'grid') {
+    throw new TypeError('Invalid center orientation');
+  }
+  updateCenterOrientation(value);
+});
+ipcMain.handle('settings:set-font-family', (_event, fontFamily: unknown) => {
+  if (
+    typeof fontFamily !== 'string' ||
+    !['handlee', 'arial', 'georgia', 'trebuchet', 'verdana', 'courier'].includes(fontFamily)
+  ) {
+    throw new TypeError('Invalid font family');
+  }
+  setFontFamily(fontFamily as 'handlee' | 'arial' | 'georgia' | 'trebuchet' | 'verdana' | 'courier');
+});
+ipcMain.handle('settings:set-color-scheme', (_event, colorScheme: unknown) => {
+  if (
+    typeof colorScheme !== 'string' ||
+    !['paper', 'stone', 'sage', 'lavender', 'midnight', 'charcoal'].includes(colorScheme)
+  ) {
+    throw new TypeError('Invalid color scheme');
+  }
+  setColorScheme(
+    colorScheme as 'paper' | 'stone' | 'sage' | 'lavender' | 'midnight' | 'charcoal',
+  );
+});
+ipcMain.handle('entries:get', (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new TypeError('Entry id must be a string');
+  return getEntry(id);
+});
+ipcMain.handle('entries:save', (_event, input: unknown) => {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('entryDate' in input) ||
+    !('blockId' in input) ||
+    !('content' in input) ||
+    typeof input.entryDate !== 'string' ||
+    typeof input.blockId !== 'number' ||
+    typeof input.content !== 'string' ||
+    ('id' in input && typeof input.id !== 'string')
+  ) {
+    throw new TypeError('Invalid journal entry');
+  }
+  return saveEntry(input as SaveEntryInput);
+});
+ipcMain.handle('entries:delete', (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new TypeError('Entry id must be a string');
+  return deleteEntry(id);
 });
 
 if (process.env.NODE_ENV === 'production') {
@@ -32,7 +206,7 @@ const isDebug =
 
 if (isDebug) {
   void import('electron-debug')
-    .then(({ default: debug }) => debug())
+    .then(({ default: debug }) => debug({ showDevTools: false }))
     .catch(console.error);
 }
 
@@ -74,6 +248,7 @@ const createWindow = async () => {
     if (process.env.START_MINIMIZED) {
       mainWindow.minimize();
     } else {
+      mainWindow.maximize();
       mainWindow.show();
     }
   });
@@ -122,6 +297,7 @@ function onActivate() {
 app
   .whenReady()
   .then(async () => {
+    initializeDatabase();
     await createWindow();
     startAutoUpdates();
     app.on('activate', onActivate);
@@ -130,3 +306,5 @@ app
     reportWindowError(error);
     app.quit();
   });
+
+app.on('before-quit', closeDatabase);
