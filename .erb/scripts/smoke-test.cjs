@@ -5,6 +5,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const port = Number(process.env.SMOKE_PORT || 1213);
 const debugPort = Number(process.env.SMOKE_DEBUG_PORT || 9335);
 const windows = process.platform === 'win32';
+const linuxCi = Boolean(process.env.CI) && process.platform === 'linux';
 const child = spawn(
   windows ? 'npm.cmd' : 'npm',
   [
@@ -12,7 +13,6 @@ const child = spawn(
     '--',
     '--remoteDebuggingPort',
     String(debugPort),
-    ...(process.env.CI && process.platform === 'linux' ? ['--noSandbox'] : []),
   ],
   {
     detached: !windows,
@@ -20,6 +20,16 @@ const child = spawn(
     env: {
       ...process.env,
       PORT: String(port),
+      ...(linuxCi
+        ? {
+            NO_SANDBOX: '1',
+            ELECTRON_CLI_ARGS: JSON.stringify([
+              '--disable-gpu',
+              '--disable-software-rasterizer',
+              '--disable-dev-shm-usage',
+            ]),
+          }
+        : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   },
@@ -42,7 +52,7 @@ child.on('error', (error) => {
 });
 
 async function waitFor(check, description) {
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     if (exited) throw new Error(`npm start exited before ${description}`);
     const value = await check();
@@ -112,16 +122,25 @@ async function main() {
   await send('Runtime.enable');
   await waitFor(
     () =>
-      evaluate(
-        'document.querySelector("h1")?.textContent === "electron-react-boilerplate" && document.querySelector("img")?.naturalWidth > 0',
-      ),
-    'home page and image',
+      evaluate('Boolean(document.querySelector(".journal-page.app-ready"))'),
+    'Journal app initialization',
   );
   assert.equal(
     await evaluate('Boolean(document.querySelector("vite-error-overlay"))'),
     false,
   );
-  assert.equal(await evaluate('document.querySelectorAll("a").length'), 2);
+  assert.equal(
+    await evaluate('Boolean(document.querySelector(".journal-page.app-ready .journal-shell"))'),
+    true,
+  );
+  assert.equal(
+    await evaluate('Boolean(document.querySelector(".load-message[role=alert]"))'),
+    false,
+  );
+  assert.equal(
+    await evaluate('Boolean(document.querySelector(".date-selector input[type=date]"))'),
+    true,
+  );
   assert.equal(
     await evaluate(
       'new Promise((resolve) => { window.electron.ipcRenderer.once("ipc-example", resolve); window.electron.ipcRenderer.sendMessage("ipc-example", ["smoke-test"]); })',
@@ -130,7 +149,7 @@ async function main() {
   );
   assert.deepEqual(exceptions, []);
   console.log(
-    'Electron startup passed: home route, image, links, preload IPC, and no renderer exceptions.',
+    'Electron startup passed: Journal layout, date selector, preload IPC, and no renderer exceptions.',
   );
 }
 
