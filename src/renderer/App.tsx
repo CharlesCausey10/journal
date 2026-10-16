@@ -24,6 +24,7 @@ import {
   CENTER_MIN_HEIGHT_PX,
   CENTER_MIN_WIDTH_PX,
   PANEL_GAP_PX,
+  defaultPanelSizes,
   fitPanelPair,
   layoutSizeLimits,
 } from '../shared/layout';
@@ -423,10 +424,7 @@ function Home() {
   const [entriesRevision, setEntriesRevision] = useState(0);
   const [settings, setSettings] = useState<LayoutSettings>({
     centerOrientation: 'vertical',
-    headerSizePx: 48,
-    footerSizePx: 36,
-    leftSizePx: 180,
-    rightSizePx: 180,
+    ...defaultPanelSizes,
     centerSizes: {},
     fontFamily: 'handlee',
     colorScheme: 'paper',

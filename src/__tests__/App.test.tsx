@@ -32,8 +32,20 @@ const layoutSettings: LayoutSettings = {
   colorScheme: 'paper',
 };
 
+const resizeObserver = {
+  observe: jest.fn(),
+  unobserve: jest.fn(),
+  disconnect: jest.fn(),
+};
+
 describe('Journal app', () => {
   beforeEach(() => {
+    jest.clearAllMocks();
+    // JSDOM does not implement layout observation; this test only checks rendering.
+    Object.defineProperty(window, 'ResizeObserver', {
+      configurable: true,
+      value: jest.fn().mockImplementation(() => resizeObserver),
+    });
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -45,8 +57,12 @@ describe('Journal app', () => {
   });
 
   it('renders blocks loaded through the preload API', async () => {
-    render(<App />);
+    const { unmount } = render(<App />);
 
     expect(await screen.findByText('Morning notes')).toBeInTheDocument();
+    expect(resizeObserver.observe).toHaveBeenCalledWith(document.querySelector('.journal-shell'));
+
+    unmount();
+    expect(resizeObserver.disconnect).toHaveBeenCalledTimes(1);
   });
 });

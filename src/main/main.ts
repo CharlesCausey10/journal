@@ -9,7 +9,7 @@
  * `./release/app/dist/main/main.js` using electron-vite.
  */
 import path from 'path';
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { app, BrowserWindow, Menu, shell, ipcMain, screen } from 'electron';
 import log from 'electron-log';
 import MenuBuilder from './menu';
@@ -35,6 +35,15 @@ import {
   saveEntry,
   type SaveEntryInput,
 } from './database';
+
+// Keep local development separate from the installed app's personal data.
+// Configure this before opening the database or creating any browser windows.
+if (!app.isPackaged) {
+  const developmentDataPath = path.join(app.getPath('appData'), 'Journal Development');
+  mkdirSync(developmentDataPath, { recursive: true });
+  app.setPath('userData', developmentDataPath);
+  app.setPath('sessionData', developmentDataPath);
+}
 
 let mainWindow: BrowserWindow | null = null;
 type SavedWindowState = {

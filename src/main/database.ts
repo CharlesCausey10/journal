@@ -3,7 +3,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { layoutSizeLimits } from '../shared/layout';
+import { defaultPanelSizes, layoutSizeLimits } from '../shared/layout';
 
 export interface Entry {
   id: string;
@@ -70,10 +70,8 @@ export interface SaveEntryInput {
 
 let database: Database.Database | null = null;
 const defaultTaskTemplate = [
-  '- [ ] Drink a glass of water',
-  '- [ ] Stretch for a few minutes',
-  "- [ ] Review today's priorities",
-  '- [ ] Make a nourishing breakfast',
+  "- [ ] Pick today's main task",
+  '- [ ] Take a short break',
 ].join('\n');
 
 function hasCurrentSchema(connection: Database.Database) {
@@ -281,17 +279,13 @@ function initializeSchema(connection: Database.Database) {
       INSERT INTO blocks (label, placement, position)
       VALUES
         ('Notes', 'center', 0),
-        ('Highlights', 'center', 1),
-        ('Gratitude', 'center', 2),
-        ('Header', 'header', 0),
-        ('Ideas', 'left', 0),
-        ('Tasks', 'right', 0),
-        ('Footer', 'footer', 0);
+        ('Tasks', 'right', 0);
 
       INSERT INTO user_settings
         (id, center_orientation, header_size_px, footer_size_px,
          left_size_px, right_size_px, center_sizes, font_family, color_scheme)
-      VALUES (1, 'vertical', 48, 36, 180, 180, '{}', 'handlee', 'paper');
+      VALUES (1, 'vertical', ${defaultPanelSizes.headerSizePx}, ${defaultPanelSizes.footerSizePx},
+              ${defaultPanelSizes.leftSizePx}, ${defaultPanelSizes.rightSizePx}, '{}', 'handlee', 'paper');
     `);
     connection
       .prepare(`UPDATE blocks SET template_content = ?

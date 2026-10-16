@@ -2,6 +2,13 @@ export const PANEL_GAP_PX = 12;
 export const CENTER_MIN_WIDTH_PX = 160;
 export const CENTER_MIN_HEIGHT_PX = 96;
 
+export const defaultPanelSizes = {
+  headerSizePx: 140,
+  footerSizePx: 140,
+  leftSizePx: 260,
+  rightSizePx: 280,
+};
+
 export const layoutSizeLimits = {
   header: { min: 32, max: 10_000 },
   footer: { min: 32, max: 10_000 },
