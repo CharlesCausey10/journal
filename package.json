@@ -1,6 +1,7 @@
 {
     "name": "journal",
-    "description": "A daily journal for personal use and development experience",
+    "version": "1.0.0",
+    "description": "A customizable daily journal",
     "license": "MIT",
     "author": {
         "name": "Charles Causey",
@@ -13,6 +14,7 @@
         "lint": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx,.cjs",
         "lint:fix": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx,.cjs --fix",
         "package": "npm run build && electron-builder build --publish never",
+        "release": "npm run build && electron-builder build --publish always",
         "rebuild": "electron-rebuild --parallel --types prod,dev,optional --module-dir release/app",
         "start": "electron-vite dev --watch",
         "test": "jest",
@@ -106,7 +108,7 @@
     },
     "build": {
         "productName": "Journal",
-        "appId": "org.erb.ElectronReact",
+        "appId": "com.charlescausey.journal",
         "asar": true,
         "afterSign": ".erb/scripts/notarize.js",
         "asarUnpack": "**\\*.{node,dll}",
@@ -165,12 +167,9 @@
         ],
         "publish": {
             "provider": "github",
-            "owner": "electron-react-boilerplate",
-            "repo": "electron-react-boilerplate"
+            "owner": "CharlesCausey10",
+            "repo": "journal"
         }
-    },
-    "collective": {
-        "url": "https://opencollective.com/electron-react-boilerplate-594"
     },
     "devEngines": {
         "runtime": {
