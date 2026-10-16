@@ -715,6 +715,7 @@ body {
 }
 
 .lexical-note-content li[role='checkbox'] {
+  position: relative;
   list-style: none;
   cursor: text;
 }
@@ -725,8 +726,11 @@ body {
 
 .lexical-note-content li[role='checkbox']::before {
   display: inline-grid;
+  box-sizing: border-box;
   width: 0.9em;
   height: 0.9em;
+  min-width: 0.9em;
+  min-height: 0.9em;
   margin-right: 0.45em;
   place-items: center;
   border: 1px solid currentColor;
@@ -738,9 +742,21 @@ body {
 
 .lexical-note-content li[role='checkbox'][aria-checked='true']::before {
   border-color: currentColor;
+}
+
+.lexical-note-content li[role='checkbox'][aria-checked='true']::after {
+  position: absolute;
+  top: 0.34em;
+  left: 0.06em;
+  display: grid;
+  width: 0.9em;
+  height: 0.9em;
+  place-items: center;
   content: '✓';
-  font-size: 0.82em;
+  font-size: inherit;
   line-height: 1;
+  pointer-events: none;
+  transform: scale(0.82);
 }
 
 .lexical-note-content li[role='checkbox']:focus-visible::before {

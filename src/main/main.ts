@@ -9,7 +9,8 @@
  * `./release/app/dist/main/main.js` using electron-vite.
  */
 import path from 'path';
-import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron';
+import { readFileSync, writeFileSync } from 'fs';
+import { app, BrowserWindow, Menu, shell, ipcMain, screen } from 'electron';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
@@ -36,6 +37,65 @@ import {
 } from './database';
 
 let mainWindow: BrowserWindow | null = null;
+type SavedWindowState = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+};
+
+let windowStateSaveTimer: NodeJS.Timeout | null = null;
+
+function readWindowState(): SavedWindowState | null {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(path.join(app.getPath('userData'), 'window-state.json'), 'utf8'),
+    );
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !('x' in parsed) || typeof parsed.x !== 'number' ||
+      !('y' in parsed) || typeof parsed.y !== 'number' ||
+      !('width' in parsed) || typeof parsed.width !== 'number' ||
+      !('height' in parsed) || typeof parsed.height !== 'number' ||
+      !('maximized' in parsed) || typeof parsed.maximized !== 'boolean' ||
+      !Number.isFinite(parsed.x) || !Number.isFinite(parsed.y) ||
+      !Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)
+    ) {
+      return null;
+    }
+    return parsed as SavedWindowState;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = mainWindow.getNormalBounds();
+  const state: SavedWindowState = {
+    ...bounds,
+    maximized: mainWindow.isMaximized(),
+  };
+  try {
+    writeFileSync(
+      path.join(app.getPath('userData'), 'window-state.json'),
+      JSON.stringify(state),
+      'utf8',
+    );
+  } catch (error) {
+    log.warn('Could not save the application window size', error);
+  }
+}
+
+function scheduleWindowStateSave() {
+  if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null;
+    saveWindowState();
+  }, 300);
+}
 
 ipcMain.on('ipc-example', async (event, arg) => {
   const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
@@ -248,15 +308,51 @@ const createWindow = async () => {
     return path.join(RESOURCES_PATH, ...paths);
   };
 
+  const savedWindowState = readWindowState();
+  const display = savedWindowState
+    ? screen.getDisplayMatching(savedWindowState)
+    : screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const minWidth = Math.min(640, workArea.width);
+  const minHeight = Math.min(480, workArea.height);
+  const width = Math.max(
+    minWidth,
+    Math.min(savedWindowState?.width ?? 1024, workArea.width),
+  );
+  const height = Math.max(
+    minHeight,
+    Math.min(savedWindowState?.height ?? 728, workArea.height),
+  );
+  const x = savedWindowState
+    ? Math.max(workArea.x, Math.min(savedWindowState.x, workArea.x + workArea.width - width))
+    : undefined;
+  const y = savedWindowState
+    ? Math.max(workArea.y, Math.min(savedWindowState.y, workArea.y + workArea.height - height))
+    : undefined;
+
   mainWindow = new BrowserWindow({
     show: false,
-    width: 1024,
-    height: 728,
+    x,
+    y,
+    width,
+    height,
+    minWidth,
+    minHeight,
     autoHideMenuBar: true,
     icon: getAssetPath('icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
     },
+  });
+
+  mainWindow.on('resize', scheduleWindowStateSave);
+  mainWindow.on('move', scheduleWindowStateSave);
+  mainWindow.on('maximize', scheduleWindowStateSave);
+  mainWindow.on('unmaximize', scheduleWindowStateSave);
+  mainWindow.on('close', () => {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = null;
+    saveWindowState();
   });
 
   mainWindow.on('ready-to-show', () => {
@@ -266,7 +362,7 @@ const createWindow = async () => {
     if (process.env.START_MINIMIZED) {
       mainWindow.minimize();
     } else {
-      mainWindow.maximize();
+      if (savedWindowState?.maximized ?? true) mainWindow.maximize();
       mainWindow.show();
     }
   });
@@ -330,4 +426,9 @@ app
     app.quit();
   });
 
-app.on('before-quit', closeDatabase);
+app.on('before-quit', () => {
+  if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+  windowStateSaveTimer = null;
+  saveWindowState();
+  closeDatabase();
+});
