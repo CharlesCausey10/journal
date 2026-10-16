@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type {
   ComponentType,
   CSSProperties,
@@ -80,9 +80,10 @@ interface BlockEditorProps {
   entry?: Entry;
   entryDate: string;
   readOnly: boolean;
+  onSaved: (entry: Entry, requestedDate: string) => void;
 }
 
-function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
+function BlockEditor({ block, entry, entryDate, readOnly, onSaved }: BlockEditorProps) {
   const [content, setContent] = useState(
     entry?.content ?? (block.previousEntryBlockId === null ? block.templateContent : ''),
   );
@@ -90,6 +91,44 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
   const [saveError, setSaveError] = useState(false);
   const entryId = useRef(entry?.id);
   const skipInitialSave = useRef(true);
+  const mounted = useRef(true);
+  const pendingContent = useRef<string | null>(null);
+  const saveTimer = useRef<number | null>(null);
+
+  const saveContent = useCallback((contentToSave: string) => {
+    if (
+      !entryId.current &&
+      !contentToSave.trim() &&
+      !block.templateContent.trim()
+    ) return;
+
+    if (mounted.current) {
+      setSaving(true);
+      setSaveError(false);
+    }
+    void window.electron.entries
+      .save({
+        ...(entryId.current ? { id: entryId.current } : {}),
+        blockId: block.id,
+        entryDate,
+        content: contentToSave,
+      })
+      .then((savedEntry) => {
+        entryId.current = savedEntry.id;
+        onSaved(savedEntry, entryDate);
+        return savedEntry;
+      })
+      .catch(() => {
+        if (mounted.current) setSaveError(true);
+      })
+      .finally(() => {
+        if (mounted.current) setSaving(false);
+      });
+  }, [block.id, block.templateContent, entryDate, onSaved]);
+  const saveContentRef = useRef(saveContent);
+  useEffect(() => {
+    saveContentRef.current = saveContent;
+  }, [saveContent]);
 
   useEffect(() => {
     if (readOnly) return undefined;
@@ -97,37 +136,35 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
       skipInitialSave.current = false;
       return undefined;
     }
+    if (!entryId.current && !content.trim() && !block.templateContent.trim()) {
+      pendingContent.current = null;
+      return undefined;
+    }
 
+    pendingContent.current = content;
     const timeout = window.setTimeout(() => {
-      if (
-        !entryId.current &&
-        !content.trim() &&
-        !block.templateContent.trim()
-      ) return;
-
-      setSaving(true);
-      setSaveError(false);
-      void window.electron.entries
-        .save({
-          ...(entryId.current ? { id: entryId.current } : {}),
-          blockId: block.id,
-          entryDate,
-          content,
-        })
-        .then((savedEntry) => {
-          entryId.current = savedEntry.id;
-          return savedEntry;
-        })
-        .catch(() => {
-          setSaveError(true);
-        })
-        .finally(() => {
-          setSaving(false);
-        });
+      saveTimer.current = null;
+      pendingContent.current = null;
+      saveContentRef.current(content);
     }, 600);
+    saveTimer.current = timeout;
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.clearTimeout(timeout);
+      if (saveTimer.current === timeout) saveTimer.current = null;
+    };
   }, [block.id, block.templateContent, content, entryDate, readOnly]);
+
+  useEffect(() => () => {
+    mounted.current = false;
+    if (pendingContent.current !== null) {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const contentToSave = pendingContent.current;
+      pendingContent.current = null;
+      saveContentRef.current(contentToSave);
+    }
+  }, []);
 
   return (
     <div className={`block-field placement-${block.placement}`}>
@@ -374,6 +411,7 @@ function Home() {
   const [entriesByBlock, setEntriesByBlock] = useState<Map<number, Entry>>(
     () => new Map(),
   );
+  const [entriesRevision, setEntriesRevision] = useState(0);
   const [settings, setSettings] = useState<LayoutSettings>({
     centerOrientation: 'vertical',
     headerSizePx: 48,
@@ -401,8 +439,23 @@ function Home() {
   const sizeSaveTimers = useRef(new Map<string, number>());
   const [entryDate, setEntryDate] = useState(today());
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
+  const entryDateRef = useRef(entryDate);
+  useEffect(() => {
+    entryDateRef.current = entryDate;
+  }, [entryDate]);
   const todayDate = today();
   const isReadOnlyDate = entryDate < todayDate;
+
+  const handleEntrySaved = (savedEntry: Entry, requestedDate: string) => {
+    if (entryDateRef.current !== requestedDate) return;
+    setEntriesByBlock((previous) => {
+      const existingEntry = previous.get(savedEntry.blockId);
+      if (existingEntry && existingEntry.updatedAt > savedEntry.updatedAt) {
+        return previous;
+      }
+      return new Map(previous).set(savedEntry.blockId, savedEntry);
+    });
+  };
 
   useEffect(() => {
     let isCurrent = true;
@@ -460,6 +513,7 @@ function Home() {
 
         setBlocks(savedBlocks);
         setEntriesByBlock(entries);
+        setEntriesRevision((revision) => revision + 1);
         setSettings(savedSettings);
         setActiveBlocks(active);
       } catch {
@@ -634,11 +688,16 @@ function Home() {
           block.id === blockId ? updatedBlock : block,
         ),
       );
-      if (update.resetFrequency || update.previousEntryBlockId !== undefined) {
+      if (
+        update.resetFrequency ||
+        update.previousEntryBlockId !== undefined ||
+        update.templateContent !== undefined
+      ) {
         const entries = await window.electron.entries.listForDate(entryDate);
         setEntriesByBlock(
           new Map(entries.map((entry) => [entry.blockId, entry])),
         );
+        setEntriesRevision((revision) => revision + 1);
       }
     } catch {
       setPanelError('Could not save this panel setting.');
@@ -802,11 +861,12 @@ function Home() {
           ) : null
         ) : active ? (
           <BlockEditor
-                  key={`${active.id}-${entryDate}-${activeEntry?.id ?? 'template'}-${active.previousEntryBlockId ?? 'normal'}-${activeEntry ? '' : active.templateContent}`}
+            key={`${active.id}-${entryDate}-${entriesRevision}-${active.previousEntryBlockId ?? 'normal'}`}
             block={active}
             entry={activeEntry}
             entryDate={entryDate}
             readOnly={active.previousEntryBlockId !== null}
+            onSaved={handleEntrySaved}
           />
         ) : null}
         {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'header' && (
@@ -875,7 +935,7 @@ function Home() {
               {centerBlocks.map((block, index) => (
                 <div
                   className={`center-pane-wrap${editingLayout ? ' layout-edit-pane' : ''}`}
-                  key={editingLayout ? `template-${block.id}` : `${block.id}-${entryDate}-${block.previousEntryBlockId ?? 'normal'}-${entriesByBlock.get(block.id)?.id ?? 'template'}-${entriesByBlock.has(block.id) ? '' : block.templateContent}`}
+                  key={editingLayout ? `template-${block.id}` : `${block.id}-${entryDate}-${entriesRevision}-${block.previousEntryBlockId ?? 'normal'}`}
                   style={{ flexGrow: settings.centerSizes[block.id] ?? 1, flexShrink: 1, flexBasis: 0 }}
                   onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
                   onDrop={editingLayout ? (event) => dropPanel(event, 'center', index) : undefined}
@@ -905,6 +965,7 @@ function Home() {
                       entry={entriesByBlock.get(block.id)}
                       entryDate={entryDate}
                       readOnly={block.previousEntryBlockId !== null}
+                      onSaved={handleEntrySaved}
                     />
                   )}
                   {settings.centerOrientation !== 'grid' && index < centerBlocks.length - 1 && (
