@@ -167,6 +167,7 @@
         ],
         "publish": {
             "provider": "github",
+            "releaseType": "release",
             "owner": "CharlesCausey10",
             "repo": "journal"
         }
