@@ -3,6 +3,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { layoutSizeLimits } from '../shared/layout';
 
 export interface Entry {
   id: string;
@@ -98,8 +99,10 @@ function hasCurrentSchema(connection: Database.Database) {
     userSettingsSql.includes("'midnight'") &&
     userSettingsSql.includes("'charcoal'") &&
     !userSettingsSql.includes('gap_px') &&
-    userSettingsSql.includes('header_size_px BETWEEN 32 AND 240') &&
-    userSettingsSql.includes('footer_size_px BETWEEN 32 AND 240') &&
+    userSettingsSql.includes('header_size_px BETWEEN 32 AND 10000') &&
+    userSettingsSql.includes('footer_size_px BETWEEN 32 AND 10000') &&
+    userSettingsSql.includes('left_size_px BETWEEN 64 AND 10000') &&
+    userSettingsSql.includes('right_size_px BETWEEN 64 AND 10000') &&
     [
       'id',
       'label',
@@ -143,7 +146,11 @@ function initializeSchema(connection: Database.Database) {
       (!settingsDefinition.sql.includes("'grid'") ||
         settingsDefinition.sql.includes('gap_px') ||
         !settingsDefinition.sql.includes("'midnight'") ||
-        !settingsDefinition.sql.includes("'charcoal'"))
+        !settingsDefinition.sql.includes("'charcoal'") ||
+        !settingsDefinition.sql.includes('header_size_px BETWEEN 32 AND 10000') ||
+        !settingsDefinition.sql.includes('footer_size_px BETWEEN 32 AND 10000') ||
+        !settingsDefinition.sql.includes('left_size_px BETWEEN 64 AND 10000') ||
+        !settingsDefinition.sql.includes('right_size_px BETWEEN 64 AND 10000'))
     ) {
       const existingSettingsColumns = new Set(
         (connection.pragma('table_info(user_settings)') as { name: string }[]).map(
@@ -160,10 +167,10 @@ function initializeSchema(connection: Database.Database) {
             center_orientation TEXT NOT NULL CHECK (
               center_orientation IN ('horizontal', 'vertical', 'grid')
             ),
-            header_size_px INTEGER NOT NULL CHECK (header_size_px BETWEEN 32 AND 240),
-            footer_size_px INTEGER NOT NULL CHECK (footer_size_px BETWEEN 32 AND 240),
-            left_size_px INTEGER NOT NULL CHECK (left_size_px BETWEEN 120 AND 360),
-            right_size_px INTEGER NOT NULL CHECK (right_size_px BETWEEN 120 AND 360),
+            header_size_px INTEGER NOT NULL CHECK (header_size_px BETWEEN 32 AND 10000),
+            footer_size_px INTEGER NOT NULL CHECK (footer_size_px BETWEEN 32 AND 10000),
+            left_size_px INTEGER NOT NULL CHECK (left_size_px BETWEEN 64 AND 10000),
+            right_size_px INTEGER NOT NULL CHECK (right_size_px BETWEEN 64 AND 10000),
             center_sizes TEXT NOT NULL,
             font_family TEXT NOT NULL CHECK (
               font_family IN ('handlee', 'arial', 'georgia', 'trebuchet', 'verdana', 'courier')
@@ -258,10 +265,10 @@ function initializeSchema(connection: Database.Database) {
         center_orientation TEXT NOT NULL CHECK (
           center_orientation IN ('horizontal', 'vertical', 'grid')
         ),
-        header_size_px INTEGER NOT NULL CHECK (header_size_px BETWEEN 32 AND 240),
-        footer_size_px INTEGER NOT NULL CHECK (footer_size_px BETWEEN 32 AND 240),
-        left_size_px INTEGER NOT NULL CHECK (left_size_px BETWEEN 120 AND 360),
-        right_size_px INTEGER NOT NULL CHECK (right_size_px BETWEEN 120 AND 360),
+        header_size_px INTEGER NOT NULL CHECK (header_size_px BETWEEN 32 AND 10000),
+        footer_size_px INTEGER NOT NULL CHECK (footer_size_px BETWEEN 32 AND 10000),
+        left_size_px INTEGER NOT NULL CHECK (left_size_px BETWEEN 64 AND 10000),
+        right_size_px INTEGER NOT NULL CHECK (right_size_px BETWEEN 64 AND 10000),
         center_sizes TEXT NOT NULL,
         font_family TEXT NOT NULL CHECK (
           font_family IN ('handlee', 'arial', 'georgia', 'trebuchet', 'verdana', 'courier')
@@ -612,7 +619,7 @@ export function updateLayoutSize(
       .get(blockId);
     if (!block) throw new Error('Unknown center block');
     const settings = getLayoutSettings();
-    const size = Math.max(0.25, Math.min(4, sizeValue));
+    const size = Math.max(layoutSizeLimits.center.min, Math.min(layoutSizeLimits.center.max, sizeValue));
     settings.centerSizes[blockId] = size;
     connection
       .prepare('UPDATE user_settings SET center_sizes = ? WHERE id = 1')
@@ -627,10 +634,7 @@ export function updateLayoutSize(
     right: 'right_size_px',
   };
   const nonCenterPlacement = placement as Exclude<BlockPlacement, 'center'>;
-  const bounds =
-    placement === 'header' || placement === 'footer'
-      ? { min: 32, max: 240 }
-      : { min: 120, max: 360 };
+  const bounds = layoutSizeLimits[nonCenterPlacement];
   const size = Math.max(bounds.min, Math.min(bounds.max, sizeValue));
   connection
     .prepare(`UPDATE user_settings SET ${sizeField[nonCenterPlacement]} = ? WHERE id = 1`)

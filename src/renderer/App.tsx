@@ -20,6 +20,13 @@ import type {
 import { quoteForDate } from './dailyQuotes';
 import type { DailyQuote } from './dailyQuotes';
 import './App.css';
+import {
+  CENTER_MIN_HEIGHT_PX,
+  CENTER_MIN_WIDTH_PX,
+  PANEL_GAP_PX,
+  fitPanelPair,
+  layoutSizeLimits,
+} from '../shared/layout';
 
 const loadMarkdownEditor = () => import('./MarkdownEditor.js');
 const MarkdownEditor = lazy(() =>
@@ -365,7 +372,7 @@ function LayoutSectionHeader({
 interface ResizeHandleProps {
   axis: 'x' | 'y';
   className: string;
-  onResize: (delta: number) => void;
+  onResize: (delta: number, handle: HTMLButtonElement) => void;
 }
 
 function ResizeHandle({ axis, className, onResize }: ResizeHandleProps) {
@@ -385,7 +392,7 @@ function ResizeHandle({ axis, className, onResize }: ResizeHandleProps) {
       onPointerMove={(event) => {
         if (lastCoordinate.current === null) return;
         const current = coordinate(event);
-        onResize(current - lastCoordinate.current);
+        onResize(current - lastCoordinate.current, event.currentTarget);
         lastCoordinate.current = current;
       }}
       onPointerUp={() => {
@@ -396,10 +403,12 @@ function ResizeHandle({ axis, className, onResize }: ResizeHandleProps) {
       }}
       onKeyDown={(event) => {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-          onResize(-8);
+          event.preventDefault();
+          onResize(-8, event.currentTarget);
         }
         if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-          onResize(8);
+          event.preventDefault();
+          onResize(8, event.currentTarget);
         }
       }}
     />
@@ -439,6 +448,10 @@ function Home() {
   const sizeSaveTimers = useRef(new Map<string, number>());
   const [entryDate, setEntryDate] = useState(today());
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
+  const [layoutViewport, setLayoutViewport] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
   const entryDateRef = useRef(entryDate);
   useEffect(() => {
     entryDateRef.current = entryDate;
@@ -534,6 +547,45 @@ function Home() {
       .filter((block) => block.placement === placement)
       .sort((a, b) => a.position - b.position);
 
+  const blocksForDate = (placement: BlockPlacement) =>
+    groupedBlocks(placement).filter((block) => {
+      if (editingLayout) return true;
+      if (isReadOnlyDate || block.previousEntryBlockId !== null) {
+        return Boolean(entriesByBlock.get(block.id)?.content.trim());
+      }
+      return true;
+    });
+
+  const visibleRegions = {
+    left: editingLayout || blocksForDate('left').length > 0,
+    right: editingLayout || blocksForDate('right').length > 0,
+    header: editingLayout || blocksForDate('header').length > 0,
+    footer: editingLayout || blocksForDate('footer').length > 0,
+  };
+
+  useLayoutEffect(() => {
+    if (loading) return undefined;
+    const shell = document.querySelector('.journal-shell');
+    if (!shell) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      setLayoutViewport({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [loading]);
+
+  const [leftSizePx, rightSizePx] = fitPanelPair(
+    settings.leftSizePx, settings.rightSizePx, layoutViewport.width,
+    layoutSizeLimits.left.min, layoutSizeLimits.right.min, CENTER_MIN_WIDTH_PX,
+    visibleRegions.left, visibleRegions.right,
+  );
+  const [headerSizePx, footerSizePx] = fitPanelPair(
+    settings.headerSizePx, settings.footerSizePx, layoutViewport.height,
+    layoutSizeLimits.header.min, layoutSizeLimits.footer.min, CENTER_MIN_HEIGHT_PX,
+    visibleRegions.header, visibleRegions.footer,
+  );
+  const visiblePanelSizes = { headerSizePx, footerSizePx, leftSizePx, rightSizePx };
+
   const sizeFor = (placement: BlockPlacement, blockId?: number) => {
     if (placement === 'center') return settings.centerSizes[blockId!] ?? 1;
     const key = `${placement}SizePx` as
@@ -541,7 +593,7 @@ function Home() {
       | 'footerSizePx'
       | 'leftSizePx'
       | 'rightSizePx';
-    return settings[key];
+    return visiblePanelSizes[key];
   };
 
   const setLayoutSize = (
@@ -549,12 +601,18 @@ function Home() {
     value: number,
     blockId?: number,
   ) => {
-    const min = placement === 'center'
-      ? 0.25
-      : placement === 'header' || placement === 'footer' ? 32 : 120;
-    const max = placement === 'center'
-      ? 4
-      : placement === 'header' || placement === 'footer' ? 240 : 360;
+    const { min } = layoutSizeLimits[placement];
+    let { max } = layoutSizeLimits[placement];
+    if (placement !== 'center') {
+      const vertical = placement === 'header' || placement === 'footer';
+      const opposite = { header: 'footer', footer: 'header', left: 'right', right: 'left' } as const;
+      const available = vertical ? layoutViewport.height : layoutViewport.width;
+      const centerMin = vertical ? CENTER_MIN_HEIGHT_PX : CENTER_MIN_WIDTH_PX;
+      const gaps = vertical
+        ? Number(visibleRegions.header) + Number(visibleRegions.footer)
+        : Number(visibleRegions.left) + Number(visibleRegions.right);
+      max = Math.max(min, Math.min(max, available - sizeFor(opposite[placement]) - centerMin - PANEL_GAP_PX * gaps));
+    }
     const sizeValue = Math.max(min, Math.min(max, value));
     if (sizeValue === sizeFor(placement, blockId)) return;
 
@@ -589,12 +647,24 @@ function Home() {
     setLayoutSize(placement, sizeFor(placement, blockId) + delta, blockId);
   };
 
-  const updateCenterPair = (first: Block, second: Block, delta: number) => {
+  const updateCenterPair = (first: Block, second: Block, delta: number, handle: HTMLButtonElement) => {
+    const firstPane = handle.parentElement;
+    const secondPane = firstPane?.nextElementSibling;
+    if (!firstPane || !secondPane) return;
+    const firstBounds = firstPane.getBoundingClientRect();
+    const secondBounds = secondPane.getBoundingClientRect();
+    const pairPixels = settings.centerOrientation === 'horizontal'
+      ? firstBounds.width + secondBounds.width
+      : firstBounds.height + secondBounds.height;
+    if (pairPixels <= 0) return;
     const firstSize = sizeFor('center', first.id);
     const secondSize = sizeFor('center', second.id);
     const pairSize = firstSize + secondSize;
-    const nextFirst = Math.max(0.25, Math.min(4, firstSize + delta / 300));
-    const nextSecond = Math.max(0.25, Math.min(4, pairSize - nextFirst));
+    const minWeight = Math.max(layoutSizeLimits.center.min, pairSize * Math.min(48, pairPixels / 2) / pairPixels);
+    const lower = Math.max(minWeight, pairSize - layoutSizeLimits.center.max);
+    const upper = Math.min(layoutSizeLimits.center.max, pairSize - minWeight);
+    const nextFirst = Math.max(lower, Math.min(upper, firstSize + delta * pairSize / pairPixels));
+    const nextSecond = pairSize - nextFirst;
     setLayoutSize('center', nextFirst, first.id);
     setLayoutSize('center', nextSecond, second.id);
   };
@@ -725,16 +795,12 @@ function Home() {
   };
 
   useEffect(() => {
-    const pageBackgrounds: Record<ColorScheme, string> = {
-      paper: 'rgb(250, 239, 198)',
-      stone: 'rgb(232, 236, 239)',
-      sage: 'rgb(231, 239, 229)',
-      lavender: 'rgb(239, 235, 246)',
-      midnight: 'rgb(23, 29, 43)',
-      charcoal: 'rgb(30, 39, 34)',
-    };
-    document.body.style.backgroundColor = pageBackgrounds[settings.colorScheme];
-  }, [settings.colorScheme]);
+    const page = document.querySelector('.journal-page');
+    if (page) {
+      document.body.style.backgroundColor = getComputedStyle(page)
+        .getPropertyValue('--theme-page').trim();
+    }
+  }, [settings.colorScheme, loading]);
 
   const movePanel = async (
     blockId: number,
@@ -787,23 +853,35 @@ function Home() {
     }
   };
 
-  const blocksForDate = (placement: BlockPlacement) =>
-    groupedBlocks(placement).filter((block) => {
-      if (editingLayout) return true;
-      if (!isReadOnlyDate) return true;
-      const entry = entriesByBlock.get(block.id);
-      return Boolean(entry?.content.trim());
-    });
-
   const cssVariables = {
-    '--header-size': `${settings.headerSizePx}px`,
-    '--footer-size': `${settings.footerSizePx}px`,
-    '--left-size': `${settings.leftSizePx}px`,
-    '--right-size': `${settings.rightSizePx}px`,
+    '--header-size': `${headerSizePx}px`,
+    '--footer-size': `${footerSizePx}px`,
+    '--left-size': `${leftSizePx}px`,
+    '--right-size': `${rightSizePx}px`,
+    gridTemplateColumns: [
+      ...(visibleRegions.left ? ['var(--left-size)'] : []),
+      'minmax(0, 1fr)',
+      ...(visibleRegions.right ? ['var(--right-size)'] : []),
+    ].join(' '),
+    gridTemplateRows: [
+      ...(visibleRegions.header ? ['var(--header-size)'] : []),
+      'minmax(0, 1fr)',
+      ...(visibleRegions.footer ? ['var(--footer-size)'] : []),
+    ].join(' '),
+    gridTemplateAreas: [
+      ...(visibleRegions.header ? ['header'] : []),
+      'center',
+      ...(visibleRegions.footer ? ['footer'] : []),
+    ].map((region) => `"${[
+      ...(visibleRegions.left ? ['left'] : []),
+      region,
+      ...(visibleRegions.right ? ['right'] : []),
+    ].join(' ')}"`).join(' '),
   } as CSSProperties;
 
   const renderTabRegion = (placement: TabPlacement) => {
     const regionBlocks = blocksForDate(placement);
+    if (!visibleRegions[placement]) return null;
     const active =
       regionBlocks.find((block) => block.id === activeBlocks[placement]) ??
       regionBlocks[0];
@@ -813,7 +891,7 @@ function Home() {
       : '';
     return (
       <section
-        className={`tab-region region-${placement}${editingLayout ? ' layout-edit-region' : ''}`}
+        className={`tab-region region-${placement}${active ? ' has-content' : ''}${regionBlocks.length > 1 ? ' has-tabs' : ''}${editingLayout ? ' layout-edit-region' : ''}`}
         onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
         onDrop={editingLayout ? (event) => dropPanel(event, placement, regionBlocks.length) : undefined}
       >
@@ -974,11 +1052,12 @@ function Home() {
                         settings.centerOrientation === 'horizontal' ? 'x' : 'y'
                       }
                       className={`center-resize ${settings.centerOrientation === 'horizontal' ? 'center-resize-x' : 'center-resize-y'}`}
-                      onResize={(delta) =>
+                      onResize={(delta, handle) =>
                         updateCenterPair(
                           block,
                           centerBlocks[index + 1],
                           delta,
+                          handle,
                         )
                       }
                     />
