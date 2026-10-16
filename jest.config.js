@@ -26,6 +26,7 @@ module.exports = {
         compiler: toolingRequire.resolve('typescript'),
         tsconfig: {
           isolatedModules: true,
+          module: 'commonjs',
         },
       },
     ],
