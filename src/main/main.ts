@@ -9,7 +9,7 @@
  * `./release/app/dist/main/main.js` using electron-vite.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
@@ -108,19 +108,29 @@ ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
   }
   const settings = input.settings;
   if (
+    ('label' in settings &&
+      (typeof settings.label !== 'string' || settings.label.trim().length < 1 || settings.label.trim().length > 40)) ||
     ('fontSizePx' in settings && typeof settings.fontSizePx !== 'number') ||
     ('resetFrequency' in settings &&
       (typeof settings.resetFrequency !== 'string' ||
         !['daily', 'weekly', 'monthly', 'yearly', 'never'].includes(settings.resetFrequency))) ||
-    !('fontSizePx' in settings || 'resetFrequency' in settings)
+    ('templateContent' in settings &&
+      (typeof settings.templateContent !== 'string' ||
+        settings.templateContent.length > 20_000)) ||
+    !('label' in settings || 'fontSizePx' in settings || 'resetFrequency' in settings || 'templateContent' in settings)
   ) {
     throw new TypeError('Invalid panel settings');
   }
   return updateBlockSettings(input.id, {
+    label: 'label' in settings ? settings.label as string : undefined,
     fontSizePx: 'fontSizePx' in settings ? settings.fontSizePx as number : undefined,
     resetFrequency:
       'resetFrequency' in settings
         ? settings.resetFrequency as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never'
+        : undefined,
+    templateContent:
+      'templateContent' in settings
+        ? settings.templateContent as string
         : undefined,
   }, input.anchorDate);
 });
@@ -186,7 +196,7 @@ ipcMain.handle('entries:save', (_event, input: unknown) => {
     typeof input.entryDate !== 'string' ||
     typeof input.blockId !== 'number' ||
     typeof input.content !== 'string' ||
-    ('id' in input && typeof input.id !== 'string')
+    ('id' in input && input.id !== undefined && typeof input.id !== 'string')
   ) {
     throw new TypeError('Invalid journal entry');
   }
@@ -235,6 +245,7 @@ const createWindow = async () => {
     show: false,
     width: 1024,
     height: 728,
+    autoHideMenuBar: true,
     icon: getAssetPath('icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -258,7 +269,12 @@ const createWindow = async () => {
   });
 
   const menuBuilder = new MenuBuilder(mainWindow);
-  menuBuilder.buildMenu();
+  if (isDebug || process.env.DEBUG_PROD === 'true') {
+    menuBuilder.setupDevelopmentEnvironment();
+  }
+  mainWindow.setMenu(null);
+  mainWindow.setMenuBarVisibility(false);
+  Menu.setApplicationMenu(null);
 
   // Open urls in the user's browser
   mainWindow.webContents.setWindowOpenHandler((edata) => {

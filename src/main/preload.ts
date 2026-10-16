@@ -68,7 +68,12 @@ const electronHandler = {
     },
     updateSettings(
       id: number,
-      settings: { fontSizePx?: number; resetFrequency?: ResetFrequency },
+      settings: {
+        label?: string;
+        fontSizePx?: number;
+        resetFrequency?: ResetFrequency;
+        templateContent?: string;
+      },
       anchorDate: string,
     ): Promise<Block> {
       return ipcRenderer.invoke('blocks:update-settings', {

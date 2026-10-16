@@ -20,6 +20,7 @@ export interface Block {
   position: number;
   fontSizePx: number;
   resetFrequency: ResetFrequency;
+  templateContent: string;
 }
 
 export type ResetFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never';
@@ -66,6 +67,12 @@ export interface SaveEntryInput {
 }
 
 let database: Database.Database | null = null;
+const defaultTaskTemplate = [
+  '- [ ] Drink a glass of water',
+  '- [ ] Stretch for a few minutes',
+  "- [ ] Review today's priorities",
+  '- [ ] Make a nourishing breakfast',
+].join('\n');
 
 function hasCurrentSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
@@ -100,6 +107,7 @@ function hasCurrentSchema(connection: Database.Database) {
       'is_active',
       'font_size_px',
       'reset_frequency',
+      'template_content',
     ].every(
       (column) => blockColumns.has(column),
     ) &&
@@ -192,6 +200,15 @@ function initializeSchema(connection: Database.Database) {
           CHECK (reset_frequency IN ('daily', 'weekly', 'monthly', 'yearly', 'never'));
       `);
     }
+    if (blockColumns.has('is_active') && !blockColumns.has('template_content')) {
+      connection.exec(`
+        ALTER TABLE blocks ADD COLUMN template_content TEXT NOT NULL DEFAULT '';
+      `);
+      connection
+        .prepare(`UPDATE blocks SET template_content = ?
+                  WHERE placement = 'right' AND label = 'Tasks' AND template_content = ''`)
+        .run(defaultTaskTemplate);
+    }
   }
   if (hasCurrentSchema(connection)) return;
 
@@ -214,6 +231,7 @@ function initializeSchema(connection: Database.Database) {
         reset_frequency TEXT NOT NULL DEFAULT 'daily' CHECK (
           reset_frequency IN ('daily', 'weekly', 'monthly', 'yearly', 'never')
         ),
+        template_content TEXT NOT NULL DEFAULT '',
         UNIQUE (placement, position)
       );
 
@@ -259,6 +277,10 @@ function initializeSchema(connection: Database.Database) {
          left_size_px, right_size_px, center_sizes, font_family, color_scheme)
       VALUES (1, 'vertical', 48, 36, 180, 180, '{}', 'handlee', 'paper');
     `);
+    connection
+      .prepare(`UPDATE blocks SET template_content = ?
+                WHERE placement = 'right' AND label = 'Tasks'`)
+      .run(defaultTaskTemplate);
     connection.pragma('user_version = 1');
   });
   initialize();
@@ -293,7 +315,8 @@ export function listBlocks(): Block[] {
   return db()
     .prepare(
       `SELECT id, label, placement, position,
-              font_size_px AS fontSizePx, reset_frequency AS resetFrequency
+              font_size_px AS fontSizePx, reset_frequency AS resetFrequency,
+              template_content AS templateContent
        FROM blocks WHERE is_active = 1 ORDER BY placement, position`,
     )
     .all() as Block[];
@@ -361,14 +384,20 @@ export function addBlock(label: string, placement: BlockPlacement): Block {
   return connection
     .prepare(`SELECT id, label, placement, position,
                      font_size_px AS fontSizePx,
-                     reset_frequency AS resetFrequency
+                     reset_frequency AS resetFrequency,
+                     template_content AS templateContent
               FROM blocks WHERE id = ?`)
     .get(Number(result.lastInsertRowid)) as Block;
 }
 
 export function updateBlockSettings(
   id: number,
-  settings: { fontSizePx?: number; resetFrequency?: ResetFrequency },
+  settings: {
+    label?: string;
+    fontSizePx?: number;
+    resetFrequency?: ResetFrequency;
+    templateContent?: string;
+  },
   anchorDate = localDateString(new Date()),
 ): Block {
   if (!Number.isInteger(id)) throw new TypeError('Invalid panel id');
@@ -378,15 +407,26 @@ export function updateBlockSettings(
   const connection = db();
   const block = connection
     .prepare(
-      `SELECT id, reset_frequency AS resetFrequency,
-              font_size_px AS fontSizePx
+      `SELECT id, label, reset_frequency AS resetFrequency,
+              font_size_px AS fontSizePx,
+              template_content AS templateContent
        FROM blocks WHERE id = ? AND is_active = 1`,
     )
     .get(id) as
-    | { id: number; resetFrequency: ResetFrequency; fontSizePx: number }
+    | {
+        id: number;
+        label: string;
+        resetFrequency: ResetFrequency;
+        fontSizePx: number;
+        templateContent: string;
+      }
     | undefined;
   if (!block) throw new Error('Panel is unavailable');
 
+  const label = settings.label === undefined ? block.label : settings.label.trim();
+  if (!label || label.length > 40) {
+    throw new RangeError('Panel title must be between 1 and 40 characters');
+  }
   const fontSizePx = settings.fontSizePx ?? block.fontSizePx;
   const resetFrequency = settings.resetFrequency ?? block.resetFrequency;
   if (!Number.isInteger(fontSizePx) || fontSizePx < 12 || fontSizePx > 36) {
@@ -402,6 +442,10 @@ export function updateBlockSettings(
   if (!frequencies.includes(resetFrequency)) {
     throw new TypeError('Invalid reset frequency');
   }
+  const templateContent = settings.templateContent ?? block.templateContent;
+  if (typeof templateContent !== 'string' || templateContent.length > 20_000) {
+    throw new RangeError('Template content must be 20,000 characters or fewer');
+  }
 
   const update = connection.transaction(() => {
     if (settings.resetFrequency && settings.resetFrequency !== block.resetFrequency) {
@@ -416,15 +460,17 @@ export function updateBlockSettings(
     }
     connection
       .prepare(
-        'UPDATE blocks SET font_size_px = ?, reset_frequency = ? WHERE id = ?',
+        `UPDATE blocks SET label = ?, font_size_px = ?, reset_frequency = ?,
+         template_content = ? WHERE id = ?`,
       )
-      .run(fontSizePx, resetFrequency, id);
+      .run(label, fontSizePx, resetFrequency, templateContent, id);
   });
   update();
   return connection
     .prepare(`SELECT id, label, placement, position,
                      font_size_px AS fontSizePx,
-                     reset_frequency AS resetFrequency
+                     reset_frequency AS resetFrequency,
+                     template_content AS templateContent
               FROM blocks WHERE id = ?`)
     .get(id) as Block;
 }

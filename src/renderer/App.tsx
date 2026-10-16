@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type {
   ComponentType,
   CSSProperties,
   DragEvent as ReactDragEvent,
   PointerEvent,
+  ReactNode,
 } from 'react';
 import { MemoryRouter as Router, Routes, Route } from 'react-router-dom';
 import '@fontsource/handlee/latin-400.css';
@@ -20,8 +21,9 @@ import { quoteForDate } from './dailyQuotes';
 import type { DailyQuote } from './dailyQuotes';
 import './App.css';
 
+const loadMarkdownEditor = () => import('./MarkdownEditor.js');
 const MarkdownEditor = lazy(() =>
-  import('./MarkdownEditor.js').then((module) => ({
+  loadMarkdownEditor().then((module) => ({
     default: module.default as unknown as ComponentType<
       import('./MarkdownEditor.js').MarkdownEditorProps
     >,
@@ -30,7 +32,7 @@ const MarkdownEditor = lazy(() =>
 
 const tabPlacements = ['header', 'left', 'right', 'footer'] as const;
 type TabPlacement = (typeof tabPlacements)[number];
-type SettingsTab = 'layout' | 'appearance';
+type SettingsTab = 'appearance';
 
 const fontOptions: { value: FontFamily; label: string }[] = [
   { value: 'handlee', label: 'Handlee' },
@@ -59,13 +61,13 @@ const fontStacks: Record<FontFamily, string> = {
   courier: "'Courier New', monospace",
 };
 
-const placementOptions: { value: BlockPlacement; label: string }[] = [
-  { value: 'center', label: 'Center' },
-  { value: 'header', label: 'Header' },
-  { value: 'footer', label: 'Footer' },
-  { value: 'left', label: 'Left sidebar' },
-  { value: 'right', label: 'Right sidebar' },
-];
+const sectionTitles: Record<BlockPlacement, string> = {
+  center: 'Center',
+  header: 'Header',
+  footer: 'Footer',
+  left: 'Left sidebar',
+  right: 'Right sidebar',
+};
 
 function today() {
   const now = new Date();
@@ -81,7 +83,9 @@ interface BlockEditorProps {
 }
 
 function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
-  const [content, setContent] = useState(entry?.content ?? '');
+  const [content, setContent] = useState(
+    entry?.content ?? block.templateContent,
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const entryId = useRef(entry?.id);
@@ -95,13 +99,17 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
     }
 
     const timeout = window.setTimeout(() => {
-      if (!entryId.current && !content.trim()) return;
+      if (
+        !entryId.current &&
+        !content.trim() &&
+        !block.templateContent.trim()
+      ) return;
 
       setSaving(true);
       setSaveError(false);
       void window.electron.entries
         .save({
-          id: entryId.current,
+          ...(entryId.current ? { id: entryId.current } : {}),
           blockId: block.id,
           entryDate,
           content,
@@ -119,7 +127,7 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
     }, 600);
 
     return () => window.clearTimeout(timeout);
-  }, [block.id, content, entryDate, readOnly]);
+  }, [block.id, block.templateContent, content, entryDate, readOnly]);
 
   return (
     <div className={`block-field placement-${block.placement}`}>
@@ -131,7 +139,7 @@ function BlockEditor({ block, entry, entryDate, readOnly }: BlockEditorProps) {
           </span>
         </span>
       )}
-      <Suspense fallback={<div className="lexical-note-loading">Loading editor…</div>}>
+      <Suspense fallback={null}>
         <MarkdownEditor
           value={content}
           label={block.label}
@@ -157,7 +165,7 @@ function PastNote({
     <article className={`past-note placement-${block.placement}`}>
       {showTitle && <h2>{block.label}</h2>}
       <div className="past-note-content" style={{ fontSize: `${block.fontSizePx}px` }}>
-        <Suspense fallback={<p>Loading note…</p>}>
+        <Suspense fallback={null}>
           <MarkdownEditor
             value={content}
             label={block.label}
@@ -167,6 +175,145 @@ function PastNote({
         </Suspense>
       </div>
     </article>
+  );
+}
+
+function TemplatePane({
+  block,
+  onSave,
+  onDragStart,
+  onOpenSettings,
+}: {
+  block: Block;
+  onSave: (content: string) => void;
+  onDragStart: (event: ReactDragEvent<HTMLSpanElement>) => void;
+  onOpenSettings: (blockId: number) => void;
+}) {
+  const [content, setContent] = useState(block.templateContent);
+  const timer = useRef<number | null>(null);
+  const contentRef = useRef(content);
+  const saveRef = useRef(onSave);
+  useEffect(() => {
+    contentRef.current = content;
+    saveRef.current = onSave;
+  }, [content, onSave]);
+  useEffect(() => () => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      saveRef.current(contentRef.current);
+    }
+  }, []);
+  const changeContent = (value: string) => {
+    contentRef.current = value;
+    setContent(value);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      onSave(value);
+    }, 500);
+  };
+  return (
+    <div className="block-field layout-template-pane">
+      <div className="layout-template-heading">
+        <span className="layout-template-grip" draggable onDragStart={onDragStart} title="Drag to move or reorder">⠿ {block.label}</span>
+        <button type="button" className="block-settings-button" aria-label={`Settings for ${block.label}`} title={`Settings for ${block.label}`} onClick={() => onOpenSettings(block.id)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.2 2.5h3.6l.45 1.8a6 6 0 0 1 1.25.72l1.78-.55 1.8 3.12-1.34 1.25a6 6 0 0 1 0 1.44l1.34 1.25-1.8 3.12-1.78-.55a6 6 0 0 1-1.25.72l-.45 1.8H8.2l-.45-1.8a6 6 0 0 1-1.25-.72l-1.78.55-1.8-3.12 1.34-1.25a6 6 0 0 1 0-1.44L2.92 7.6l1.8-3.12 1.78.55a6 6 0 0 1 1.25-.72L8.2 2.5Z"/><circle cx="10" cy="9.55" r="2.25"/></svg>
+        </button>
+      </div>
+      <div className="layout-template-editor">
+        <Suspense fallback={null}>
+          <MarkdownEditor
+            value={content}
+            label={`${block.label} template`}
+            fontSizePx={block.fontSizePx}
+            readOnly={false}
+            placeholder="Default content..."
+            onChange={changeContent}
+          />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function LayoutSectionHeader({
+  title,
+  isOpen,
+  onToggle,
+  onAdd,
+  extra,
+}: {
+  title: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  onAdd: (label: string) => void;
+  extra?: ReactNode;
+}) {
+  const [label, setLabel] = useState('');
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLFormElement>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return undefined;
+
+    const positionPopover = () => {
+      const button = addButtonRef.current;
+      const popover = popoverRef.current;
+      if (!button || !popover) return;
+
+      const buttonRect = button.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      const edgePadding = 8;
+      const left = Math.max(
+        edgePadding,
+        Math.min(buttonRect.right - popoverRect.width, window.innerWidth - popoverRect.width - edgePadding),
+      );
+      const belowTop = buttonRect.bottom + 4;
+      const top = Math.max(
+        edgePadding,
+        Math.min(
+          belowTop + popoverRect.height > window.innerHeight - edgePadding
+            ? buttonRect.top - popoverRect.height - 4
+            : belowTop,
+          window.innerHeight - popoverRect.height - edgePadding,
+        ),
+      );
+
+      popover.style.left = `${left}px`;
+      popover.style.top = `${top}px`;
+      popover.style.visibility = 'visible';
+    };
+
+    positionPopover();
+    window.addEventListener('resize', positionPopover);
+    window.addEventListener('scroll', positionPopover, true);
+    return () => {
+      window.removeEventListener('resize', positionPopover);
+      window.removeEventListener('scroll', positionPopover, true);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="layout-section-heading">
+      <strong>{title}</strong>
+      {extra}
+      <button ref={addButtonRef} type="button" className="layout-add-toggle" aria-label={`Add block to ${title}`} aria-expanded={isOpen} onClick={onToggle}>
+        <span aria-hidden="true">+</span>
+        Add Block
+      </button>
+      {isOpen && (
+        <form ref={popoverRef} className="layout-add-popover" onSubmit={(event) => { event.preventDefault(); const cleanLabel = label.trim(); if (!cleanLabel) return; onAdd(cleanLabel); setLabel(''); }}>
+          <label>
+            Section title
+            <input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} placeholder="e.g. Ideas" required />
+          </label>
+          <div className="layout-add-actions">
+            <button type="button" onClick={onToggle}>Cancel</button>
+            <button type="submit">Add</button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -236,15 +383,14 @@ function Home() {
   const [loadError, setLoadError] = useState(false);
   const [layoutError, setLayoutError] = useState(false);
   const [activeDialog, setActiveDialog] = useState<SettingsTab | null>(null);
-  const [newBlockLabel, setNewBlockLabel] = useState('');
-  const [newBlockPlacement, setNewBlockPlacement] =
-    useState<BlockPlacement>('center');
+  const [selectedPanelSettingsId, setSelectedPanelSettingsId] = useState<number | null>(null);
+  const [pendingPanelRemoval, setPendingPanelRemoval] = useState<Block | null>(null);
+  const [panelSettingsLabel, setPanelSettingsLabel] = useState('');
+  const [editingLayout, setEditingLayout] = useState(false);
+  const [addMenuPlacement, setAddMenuPlacement] = useState<BlockPlacement | null>(null);
   const [panelError, setPanelError] = useState('');
   const [settingsError, setSettingsError] = useState('');
-  const [selectedSettingsBlockId, setSelectedSettingsBlockId] =
-    useState<number | null>(null);
   const sizeSaveTimers = useRef(new Map<string, number>());
-  const layoutSaveTimers = useRef(new Map<'orientation', number>());
   const [entryDate, setEntryDate] = useState(today());
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
   const isReadOnlyDate = entryDate < today();
@@ -273,7 +419,6 @@ function Home() {
   useEffect(
     () => () => {
       sizeSaveTimers.current.forEach((timer) => window.clearTimeout(timer));
-      layoutSaveTimers.current.forEach((timer) => window.clearTimeout(timer));
     },
     [],
   );
@@ -287,6 +432,7 @@ function Home() {
           window.electron.blocks.list(),
           window.electron.entries.listForDate(entryDate),
           window.electron.layout.get(),
+          loadMarkdownEditor(),
         ]);
         if (!isCurrent) return;
 
@@ -393,45 +539,36 @@ function Home() {
 
   const changeOrientation = (centerOrientation: 'horizontal' | 'vertical' | 'grid') => {
     setSettings((previous) => ({ ...previous, centerOrientation }));
-    const previousTimer = layoutSaveTimers.current.get('orientation');
-    if (previousTimer) window.clearTimeout(previousTimer);
-    const timer = window.setTimeout(() => {
-      void window.electron.layout
-        .setCenterOrientation(centerOrientation)
-        .catch(() => setLayoutError(true));
-      layoutSaveTimers.current.delete('orientation');
-    }, 200);
-    layoutSaveTimers.current.set('orientation', timer);
+    setLayoutError(false);
+    void window.electron.layout
+      .setCenterOrientation(centerOrientation)
+      .catch(() => setLayoutError(true));
   };
-
-  const selectedBlock = (placement: TabPlacement) =>
-    groupedBlocks(placement).find(
-      (block) => block.id === activeBlocks[placement],
-    );
 
   const setSelectedBlock = (placement: TabPlacement, id: number) => {
     setActiveBlocks((previous) => ({ ...previous, [placement]: id }));
   };
 
-  const addPanel = async () => {
+  const addPanel = async (label: string, placement: BlockPlacement) => {
     try {
       setPanelError('');
-      const block = await window.electron.blocks.add(
-        newBlockLabel,
-        newBlockPlacement,
-      );
+      const block = await window.electron.blocks.add(label, placement);
       setBlocks((previous) => [...previous, block]);
-      setSelectedSettingsBlockId(block.id);
       if (block.placement !== 'center') {
         setActiveBlocks((previous) => ({
           ...previous,
           [block.placement]: block.id,
         }));
       }
-      setNewBlockLabel('');
+      setAddMenuPlacement(null);
     } catch {
       setPanelError('Could not add this panel. Use a title up to 40 characters.');
     }
+  };
+
+  const toggleAddMenu = (placement: BlockPlacement) => {
+    setPanelError('');
+    setAddMenuPlacement((current) => current === placement ? null : placement);
   };
 
   const removePanel = async (block: Block) => {
@@ -440,9 +577,7 @@ function Home() {
       const removed = await window.electron.blocks.remove(block.id);
       if (!removed) throw new Error('Panel was not found');
       setBlocks((previous) => previous.filter((item) => item.id !== block.id));
-      if (selectedSettingsBlockId === block.id) {
-        setSelectedSettingsBlockId(null);
-      }
+      if (selectedPanelSettingsId === block.id) setSelectedPanelSettingsId(null);
       if (block.placement !== 'center' && activeBlocks[block.placement] === block.id) {
         const replacement = blocks.find(
           (item) => item.placement === block.placement && item.id !== block.id,
@@ -457,9 +592,26 @@ function Home() {
     }
   };
 
+  const confirmPanelRemoval = async () => {
+    if (!pendingPanelRemoval) return;
+    const block = pendingPanelRemoval;
+    setPendingPanelRemoval(null);
+    await removePanel(block);
+  };
+
+  const openPanelSettings = (block: Block) => {
+    setPanelSettingsLabel(block.label);
+    setSelectedPanelSettingsId(block.id);
+  };
+
   const updatePanelSettings = async (
     blockId: number,
-    update: { fontSizePx?: number; resetFrequency?: ResetFrequency },
+    update: {
+      fontSizePx?: number;
+      resetFrequency?: ResetFrequency;
+      templateContent?: string;
+      label?: string;
+    },
   ) => {
     try {
       setPanelError('');
@@ -567,58 +719,12 @@ function Home() {
     }
   };
 
-  const renderLayoutZone = (placement: BlockPlacement, label: string) => {
-    const zoneBlocks = groupedBlocks(placement);
-    return (
-      <div
-        className={`layout-zone layout-zone-${placement}${placement === 'center' ? ` ${settings.centerOrientation}` : ''}`}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => dropPanel(event, placement, zoneBlocks.length)}
-      >
-        <span className="layout-zone-title">{label}</span>
-        <div className="layout-zone-blocks" role="list">
-          {zoneBlocks.map((block, index) => (
-            <div
-              key={block.id}
-              className="layout-panel-card"
-              role="listitem"
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.setData('text/plain', String(block.id));
-                event.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => dropPanel(event, placement, index)}
-            >
-              <span className="layout-drag-grip" aria-hidden="true">⠿</span>
-              <span className="layout-panel-label">{block.label}</span>
-              <button
-                type="button"
-                className="layout-remove-panel"
-                aria-label={`Remove ${block.label}`}
-                onClick={() => void removePanel(block)}
-              >
-                ×
-              </button>
-              <button
-                type="button"
-                className="layout-panel-settings"
-                aria-label={`Settings for ${block.label}`}
-                onClick={() => setSelectedSettingsBlockId(block.id)}
-              >
-                ⚙
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   const blocksForDate = (placement: BlockPlacement) =>
     groupedBlocks(placement).filter((block) => {
+      if (editingLayout) return true;
       if (!isReadOnlyDate) return true;
-      return Boolean(entriesByBlock.get(block.id)?.content.trim());
+      const entry = entriesByBlock.get(block.id);
+      return Boolean(entry?.content.trim());
     });
 
   const cssVariables = {
@@ -626,10 +732,6 @@ function Home() {
     '--footer-size': `${settings.footerSizePx}px`,
     '--left-size': `${settings.leftSizePx}px`,
     '--right-size': `${settings.rightSizePx}px`,
-    '--header-resize-size': !isReadOnlyDate || blocksForDate('header').length > 0 ? '8px' : '0px',
-    '--footer-resize-size': !isReadOnlyDate || blocksForDate('footer').length > 0 ? '8px' : '0px',
-    '--left-resize-size': !isReadOnlyDate || blocksForDate('left').length > 0 ? '8px' : '0px',
-    '--right-resize-size': !isReadOnlyDate || blocksForDate('right').length > 0 ? '8px' : '0px',
   } as CSSProperties;
 
   const renderTabRegion = (placement: TabPlacement) => {
@@ -638,8 +740,23 @@ function Home() {
       regionBlocks.find((block) => block.id === activeBlocks[placement]) ??
       regionBlocks[0];
     const activeEntry = active ? entriesByBlock.get(active.id) : undefined;
+    const activeContent = active
+      ? activeEntry?.content ?? active.templateContent
+      : '';
     return (
-      <section className={`tab-region region-${placement}`}>
+      <section
+        className={`tab-region region-${placement}${editingLayout ? ' layout-edit-region' : ''}`}
+        onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
+        onDrop={editingLayout ? (event) => dropPanel(event, placement, regionBlocks.length) : undefined}
+      >
+        {editingLayout && (
+          <LayoutSectionHeader
+            title={sectionTitles[placement]}
+            isOpen={addMenuPlacement === placement}
+            onToggle={() => toggleAddMenu(placement)}
+            onAdd={(label) => void addPanel(label, placement)}
+          />
+        )}
         {regionBlocks.length > 1 ? (
           <div className="region-tabs" role="tablist" aria-label={`${placement} blocks`}>
             {regionBlocks.map((block) => (
@@ -655,75 +772,116 @@ function Home() {
               </button>
             ))}
           </div>
-        ) : active ? (
+        ) : active && !editingLayout ? (
           <div className="region-title">{active.label}</div>
         ) : null}
-        {active && isReadOnlyDate && activeEntry ? (
-          <PastNote block={active} content={activeEntry.content} showTitle={false} />
-        ) : active && (
+        {active && editingLayout ? (
+          <TemplatePane
+            key={`template-${active.id}`}
+            block={active}
+            onSave={(templateContent) => void updatePanelSettings(active.id, { templateContent })}
+            onOpenSettings={() => openPanelSettings(active)}
+            onDragStart={(event) => {
+              event.dataTransfer.setData('text/plain', String(active.id));
+              event.dataTransfer.effectAllowed = 'move';
+            }}
+          />
+        ) : active && isReadOnlyDate ? (
+          activeContent.trim() ? (
+            <PastNote block={active} content={activeContent} showTitle={false} />
+          ) : null
+        ) : active ? (
           <BlockEditor
-            key={`${active.id}-${entryDate}-${activeEntry?.id ?? 'empty'}`}
+                  key={`${active.id}-${entryDate}-${activeEntry?.id ?? 'template'}-${activeEntry ? '' : active.templateContent}`}
             block={active}
             entry={activeEntry}
             entryDate={entryDate}
             readOnly={isReadOnlyDate}
           />
+        ) : null}
+        {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'header' && (
+          <ResizeHandle axis="y" className="header-resize" onResize={(delta) => updateSize('header', delta)} />
+        )}
+        {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'footer' && (
+          <ResizeHandle axis="y" className="footer-resize" onResize={(delta) => updateSize('footer', -delta)} />
+        )}
+        {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'left' && (
+          <ResizeHandle axis="x" className="left-resize" onResize={(delta) => updateSize('left', delta)} />
+        )}
+        {(!isReadOnlyDate || regionBlocks.length > 0) && placement === 'right' && (
+          <ResizeHandle axis="x" className="right-resize" onResize={(delta) => updateSize('right', -delta)} />
         )}
       </section>
     );
   };
 
   const centerBlocks = blocksForDate('center');
+  const panelSettingsBlock = blocks.find((block) => block.id === selectedPanelSettingsId);
+  if (loading) return null;
+
   return (
-    <main className={`journal-page theme-${settings.colorScheme}`}>
-      {loading ? (
-        <p className="load-message">Loading…</p>
-      ) : loadError ? (
+    <main className={`journal-page theme-${settings.colorScheme} app-ready${editingLayout ? ' layout-edit-mode' : ''}`}>
+      {loadError ? (
         <p className="load-message" role="alert">
           Could not load or save the journal layout.
         </p>
       ) : (
         <>
         <div
-          className={`journal-shell font-${settings.fontFamily} theme-${settings.colorScheme}`}
+          className={`journal-shell font-${settings.fontFamily} theme-${settings.colorScheme}${editingLayout ? ' layout-editing' : ''}`}
           style={cssVariables}
         >
           {renderTabRegion('header')}
-          {(!isReadOnlyDate || blocksForDate('header').length > 0) && (
-            <ResizeHandle
-              axis="y"
-              className="header-resize"
-              onResize={(delta) => {
-                const block = selectedBlock('header');
-                if (block) updateSize('header', delta);
-              }}
-            />
-          )}
           {renderTabRegion('left')}
-          {(!isReadOnlyDate || blocksForDate('left').length > 0) && (
-            <ResizeHandle
-              axis="x"
-              className="left-resize"
-              onResize={(delta) => {
-                const block = selectedBlock('left');
-                if (block) updateSize('left', delta);
-              }}
-            />
-          )}
-          <section className="center-region">
+          <section
+            className={`center-region${editingLayout ? ' layout-edit-region' : ''}`}
+            onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
+            onDrop={editingLayout ? (event) => dropPanel(event, 'center', centerBlocks.length) : undefined}
+          >
+            {editingLayout && (
+              <LayoutSectionHeader
+                title={sectionTitles.center}
+                isOpen={addMenuPlacement === 'center'}
+                onToggle={() => toggleAddMenu('center')}
+                onAdd={(label) => void addPanel(label, 'center')}
+                extra={centerBlocks.length > 1 ? (
+                  <div className="center-arrangement-controls" aria-label="Center arrangement">
+                    <span>Arrangement</span>
+                    <button type="button" aria-label="Rows" title="Rows" aria-pressed={settings.centerOrientation === 'vertical'} onClick={() => changeOrientation('vertical')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16" /></svg></button>
+                    <button type="button" aria-label="Columns" title="Columns" aria-pressed={settings.centerOrientation === 'horizontal'} onClick={() => changeOrientation('horizontal')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M12 4v16M19 4v16" /></svg></button>
+                    <button type="button" aria-label="Grid" title="Grid" aria-pressed={settings.centerOrientation === 'grid'} onClick={() => changeOrientation('grid')}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" /><rect x="13" y="4" width="7" height="7" /><rect x="4" y="13" width="7" height="7" /><rect x="13" y="13" width="7" height="7" /></svg></button>
+                  </div>
+                ) : undefined}
+              />
+            )}
             <div
               className={`center-panes ${settings.centerOrientation}`}
             >
               {centerBlocks.map((block, index) => (
                 <div
-                  className="center-pane-wrap"
-                  key={`${block.id}-${entryDate}-${entriesByBlock.get(block.id)?.id ?? 'empty'}`}
+                  className={`center-pane-wrap${editingLayout ? ' layout-edit-pane' : ''}`}
+                  key={editingLayout ? `template-${block.id}` : `${block.id}-${entryDate}-${entriesByBlock.get(block.id)?.id ?? 'template'}-${entriesByBlock.has(block.id) ? '' : block.templateContent}`}
                   style={{ flexGrow: settings.centerSizes[block.id] ?? 1, flexShrink: 1, flexBasis: 0 }}
+                  onDragOver={editingLayout ? (event) => event.preventDefault() : undefined}
+                  onDrop={editingLayout ? (event) => dropPanel(event, 'center', index) : undefined}
                 >
-                  {isReadOnlyDate ? (
+                  {editingLayout ? (
+                    <TemplatePane
+                      block={block}
+                      onSave={(templateContent) => void updatePanelSettings(block.id, { templateContent })}
+                      onOpenSettings={() => openPanelSettings(block)}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData('text/plain', String(block.id));
+                        event.dataTransfer.effectAllowed = 'move';
+                      }}
+                    />
+                  ) : isReadOnlyDate ? (
                     <PastNote
                       block={block}
-                      content={entriesByBlock.get(block.id)!.content}
+                      content={
+                        entriesByBlock.get(block.id)?.content ??
+                        block.templateContent
+                      }
                     />
                   ) : (
                     <BlockEditor
@@ -738,7 +896,7 @@ function Home() {
                       axis={
                         settings.centerOrientation === 'horizontal' ? 'x' : 'y'
                       }
-                      className="center-resize"
+                      className={`center-resize ${settings.centerOrientation === 'horizontal' ? 'center-resize-x' : 'center-resize-y'}`}
                       onResize={(delta) =>
                         updateCenterPair(
                           block,
@@ -752,291 +910,160 @@ function Home() {
               ))}
             </div>
           </section>
-          {(!isReadOnlyDate || blocksForDate('right').length > 0) && (
-            <ResizeHandle
-              axis="x"
-              className="right-resize"
-              onResize={(delta) => {
-                const block = selectedBlock('right');
-                if (block) updateSize('right', -delta);
-              }}
-            />
-          )}
           {renderTabRegion('right')}
-          {(!isReadOnlyDate || blocksForDate('footer').length > 0) && (
-            <ResizeHandle
-              axis="y"
-              className="footer-resize"
-              onResize={(delta) => {
-                const block = selectedBlock('footer');
-                if (block) updateSize('footer', -delta);
-              }}
-            />
-          )}
           {renderTabRegion('footer')}
           {activeDialog && (
             <div className="dialog-layer">
-              <button
-                type="button"
-                className="dialog-backdrop"
-                aria-label="Close dialog"
-                onClick={() => setActiveDialog(null)}
-              />
-              <section
-                className="app-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="dialog-title"
-              >
+              <button type="button" className="dialog-backdrop" aria-label="Close dialog" onClick={() => setActiveDialog(null)} />
+              <section className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
                 <div className="dialog-heading">
                   <h2 id="dialog-title">Settings</h2>
-                  <button
-                    type="button"
-                    aria-label="Close dialog"
-                    onClick={() => setActiveDialog(null)}
-                  >
-                    ×
-                  </button>
+                  <button type="button" aria-label="Close dialog" onClick={() => setActiveDialog(null)}>×</button>
                 </div>
-                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeDialog === 'layout'}
-                    onClick={() => setActiveDialog('layout')}
-                  >
-                    Layout
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeDialog === 'appearance'}
-                    onClick={() => setActiveDialog('appearance')}
-                  >
-                    Appearance
-                  </button>
-                </div>
-                {activeDialog === 'layout' ? (
-                  <div className="dialog-content">
-                    <form
-                      className="add-panel-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void addPanel();
-                      }}
-                    >
-                      <label>
-                        Panel title
-                        <input
-                          value={newBlockLabel}
-                          onChange={(event) => setNewBlockLabel(event.target.value)}
-                          maxLength={40}
-                          required
-                        />
-                      </label>
-                      <label>
-                        Placement
-                        <select
-                          value={newBlockPlacement}
-                          onChange={(event) =>
-                            setNewBlockPlacement(event.target.value as BlockPlacement)
-                          }
-                        >
-                          {placementOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button type="submit">Add panel</button>
-                    </form>
-                    <p className="dialog-help">
-                      Drag a panel to move or reorder it. Removing a panel hides it from the layout and keeps its saved entries.
-                    </p>
-                    <fieldset className="center-orientation-setting">
-                      <legend>Center panels</legend>
-                      <button
-                        type="button"
-                        aria-label="Arrange center panels in rows"
-                        title="Rows"
-                        aria-pressed={settings.centerOrientation === 'vertical'}
-                        onClick={() => changeOrientation('vertical')}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M4 5h16M4 12h16M4 19h16" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Arrange center panels in columns"
-                        title="Columns"
-                        aria-pressed={settings.centerOrientation === 'horizontal'}
-                        onClick={() => changeOrientation('horizontal')}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M5 4v16M12 4v16M19 4v16" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Arrange center panels in a grid"
-                        title="Grid"
-                        aria-pressed={settings.centerOrientation === 'grid'}
-                        onClick={() => changeOrientation('grid')}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <rect x="4" y="4" width="7" height="7" />
-                          <rect x="13" y="4" width="7" height="7" />
-                          <rect x="4" y="13" width="7" height="7" />
-                          <rect x="13" y="13" width="7" height="7" />
-                        </svg>
-                      </button>
-                    </fieldset>
-                    <div className="layout-editor-grid">
-                      {renderLayoutZone('header', 'Header')}
-                      {renderLayoutZone('left', 'Left sidebar')}
-                      {renderLayoutZone('center', 'Center')}
-                      {renderLayoutZone('right', 'Right sidebar')}
-                      {renderLayoutZone('footer', 'Footer')}
+                <div className="dialog-content settings-content">
+                  <label>
+                    Textbox font
+                    <select value={settings.fontFamily} style={{ fontFamily: fontStacks[settings.fontFamily] }} onChange={(event) => void changeFontFamily(event.target.value as FontFamily)}>
+                      {fontOptions.map((option) => <option key={option.value} value={option.value} style={{ fontFamily: fontStacks[option.value] }}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <fieldset className="color-scheme-setting">
+                    <legend>Color scheme</legend>
+                    <div className="color-scheme-options">
+                      {colorSchemeOptions.map((option) => (
+                        <button key={option.value} type="button" aria-label={option.label} aria-pressed={settings.colorScheme === option.value} onClick={() => void changeColorScheme(option.value)}>
+                          <span className={`scheme-name-preview scheme-name-preview-${option.value}`}>{option.label}</span>
+                        </button>
+                      ))}
                     </div>
-                    {(() => {
-                      const selectedPanelForSettings =
-                        blocks.find((block) => block.id === selectedSettingsBlockId) ??
-                        blocks[0];
-                      return selectedPanelForSettings ? (
-                        <section className="block-settings-panel" aria-label={`Settings for ${selectedPanelForSettings.label}`}>
-                          <h3>{selectedPanelForSettings.label} settings</h3>
-                          <label>
-                            Font size: {selectedPanelForSettings.fontSizePx}px
-                            <input
-                              type="range"
-                              min="12"
-                              max="36"
-                              step="1"
-                              value={selectedPanelForSettings.fontSizePx}
-                              onChange={(event) =>
-                                void updatePanelSettings(selectedPanelForSettings.id, {
-                                  fontSizePx: Number(event.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                          <label>
-                            Reset text
-                            <select
-                              value={selectedPanelForSettings.resetFrequency}
-                              onChange={(event) =>
-                                void updatePanelSettings(selectedPanelForSettings.id, {
-                                  resetFrequency: event.target.value as ResetFrequency,
-                                })
-                              }
-                            >
-                              <option value="daily">Daily</option>
-                              <option value="weekly">Weekly</option>
-                              <option value="monthly">Monthly</option>
-                              <option value="yearly">Yearly</option>
-                              <option value="never">Never</option>
-                            </select>
-                          </label>
-                        </section>
-                      ) : null;
-                    })()}
-                    {panelError && <p className="dialog-error" role="alert">{panelError}</p>}
-                  </div>
-                ) : (
-                  <div className="dialog-content settings-content">
+                  </fieldset>
+                  {settingsError && <p className="dialog-error" role="alert">{settingsError}</p>}
+                </div>
+              </section>
+            </div>
+          )}
+          {panelSettingsBlock && (
+            <div className="dialog-layer">
+              <button type="button" className="dialog-backdrop" aria-label="Close panel settings" onClick={() => setSelectedPanelSettingsId(null)} />
+              <section className="app-dialog block-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="panel-settings-dialog-title">
+                <div className="dialog-heading">
+                  <h2 id="panel-settings-dialog-title">{panelSettingsBlock.label} settings</h2>
+                  <button type="button" aria-label="Close panel settings" onClick={() => setSelectedPanelSettingsId(null)}>×</button>
+                </div>
+                <div className="dialog-content settings-content block-settings-content">
+                  <form onSubmit={(event) => { event.preventDefault(); const label = panelSettingsLabel.trim(); if (label) void updatePanelSettings(panelSettingsBlock.id, { label }); }}>
                     <label>
-                      Textbox font
-                      <select
-                        value={settings.fontFamily}
-                        style={{ fontFamily: fontStacks[settings.fontFamily] }}
-                        onChange={(event) =>
-                          void changeFontFamily(event.target.value as FontFamily)
-                        }
-                      >
-                        {fontOptions.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            style={{ fontFamily: fontStacks[option.value] }}
-                          >
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      Panel title
+                      <input value={panelSettingsLabel} onChange={(event) => setPanelSettingsLabel(event.target.value)} maxLength={40} required />
                     </label>
-                    <fieldset className="color-scheme-setting">
-                      <legend>Color scheme</legend>
-                      <div className="color-scheme-options">
-                        {colorSchemeOptions.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            aria-label={option.label}
-                            aria-pressed={settings.colorScheme === option.value}
-                            onClick={() => void changeColorScheme(option.value)}
-                          >
-                            <span className={`scheme-name-preview scheme-name-preview-${option.value}`}>
-                              {option.label}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </fieldset>
-                    {settingsError && <p className="dialog-error" role="alert">{settingsError}</p>}
+                    <button type="submit">Save title</button>
+                  </form>
+                  <label>
+                    Reset text
+                    <select value={panelSettingsBlock.resetFrequency} onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, { resetFrequency: event.target.value as ResetFrequency })}>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
+                      <option value="never">Never</option>
+                    </select>
+                  </label>
+                  <label>
+                    Text size: {panelSettingsBlock.fontSizePx}px
+                    <input type="range" min="12" max="36" value={panelSettingsBlock.fontSizePx} onChange={(event) => void updatePanelSettings(panelSettingsBlock.id, { fontSizePx: Number(event.target.value) })} />
+                  </label>
+                  <button type="button" className="remove-panel-button" onClick={() => setPendingPanelRemoval(panelSettingsBlock)}>Remove panel</button>
+                  {panelError && <p className="dialog-error" role="alert">{panelError}</p>}
+                </div>
+              </section>
+            </div>
+          )}
+          {pendingPanelRemoval && (
+            <div className="dialog-layer confirmation-layer">
+              <button type="button" className="dialog-backdrop" aria-label="Cancel panel removal" onClick={() => setPendingPanelRemoval(null)} />
+              <section className="app-dialog confirm-removal-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-panel-title" aria-describedby="remove-panel-description">
+                <div className="dialog-heading">
+                  <h2 id="remove-panel-title">Remove panel?</h2>
+                  <button type="button" aria-label="Cancel panel removal" onClick={() => setPendingPanelRemoval(null)}>×</button>
+                </div>
+                <div className="dialog-content confirm-removal-content">
+                  <p id="remove-panel-description">Remove “{pendingPanelRemoval.label}” from the layout? Its saved entries will be kept.</p>
+                  <div className="confirm-removal-actions">
+                    <button type="button" onClick={() => setPendingPanelRemoval(null)}>Cancel</button>
+                    <button type="button" className="confirm-remove-button" onClick={() => void confirmPanelRemoval()}>Remove panel</button>
                   </div>
-                )}
+                </div>
               </section>
             </div>
           )}
         </div>
         <div className="center-toolbar bottom-toolbar">
-          {layoutError && (
+          {editingLayout ? (
+            <>
+              <strong className="layout-edit-title">Editing layout and templates</strong>
+              <span className={`layout-edit-status${panelError || layoutError ? ' has-error' : ''}`} role={panelError || layoutError ? 'alert' : undefined}>
+                {panelError || (layoutError ? 'Layout change could not be saved' : 'Changes set default content. Drag ⠿ to move or reorder panels.')}
+              </span>
+              <button
+                type="button"
+                className="layout-done-button"
+                onClick={() => setEditingLayout(false)}
+              >
+                Done
+              </button>
+            </>
+          ) : (
+            <>
+              {!editingLayout && dailyQuote && (
+                <span className="daily-quote" aria-label="Today's thought">
+                  “{dailyQuote.text}” — {dailyQuote.author}
+                </span>
+              )}
+              {layoutError && (
             <span className="layout-save-error" role="alert">
               Layout change could not be saved
             </span>
-          )}
-          <button type="button" onClick={() => setActiveDialog('layout')}>
+              )}
+              {isReadOnlyDate && (
+                <span className="readonly-date-note">Read only</span>
+              )}
+              <div className="date-selector">
+                <button
+                  type="button"
+                  aria-label="Previous day"
+                  onClick={() => changeDateByDays(-1)}
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m12 4-6 6 6 6" />
+                  </svg>
+                </button>
+                <input
+                  type="date"
+                  aria-label="Journal date"
+                  value={entryDate}
+                  onChange={(event) => setEntryDate(event.target.value)}
+                />
+                <button
+                  type="button"
+                  aria-label="Next day"
+                  onClick={() => changeDateByDays(1)}
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m8 4 6 6-6 6" />
+                  </svg>
+                </button>
+              </div>
+          <button type="button" onClick={() => setActiveDialog('appearance')}>
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <path d="M8.2 2.5h3.6l.45 1.8a6 6 0 0 1 1.25.72l1.78-.55 1.8 3.12-1.34 1.25a6 6 0 0 1 0 1.44l1.34 1.25-1.8 3.12-1.78-.55a6 6 0 0 1-1.25.72l-.45 1.8H8.2l-.45-1.8a6 6 0 0 1-1.25-.72l-1.78.55-1.8-3.12 1.34-1.25a6 6 0 0 1 0-1.44L2.92 7.6l1.8-3.12 1.78.55a6 6 0 0 1 1.25-.72L8.2 2.5Z" />
               <circle cx="10" cy="9.55" r="2.25" />
             </svg>
             Settings
           </button>
-          <div className="date-selector">
-            <button
-              type="button"
-              aria-label="Previous day"
-              onClick={() => changeDateByDays(-1)}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="m12 4-6 6 6 6" />
-              </svg>
-            </button>
-            <input
-              type="date"
-              aria-label="Journal date"
-              value={entryDate}
-              onChange={(event) => setEntryDate(event.target.value)}
-            />
-            <button
-              type="button"
-              aria-label="Next day"
-              onClick={() => changeDateByDays(1)}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="m8 4 6 6-6 6" />
-              </svg>
-            </button>
-          </div>
-          {isReadOnlyDate && (
-            <span className="readonly-date-note">Read only</span>
+          {!editingLayout && (
+            <button type="button" onClick={() => setEditingLayout(true)}>Edit Layout</button>
           )}
-          {dailyQuote && (
-            <span className="daily-quote" aria-label="Today's thought">
-              “{dailyQuote.text}” — {dailyQuote.author}
-            </span>
+            </>
           )}
         </div>
         </>

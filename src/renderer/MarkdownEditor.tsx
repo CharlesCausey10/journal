@@ -26,6 +26,7 @@ export interface MarkdownEditorProps {
   fontSizePx: number;
   readOnly: boolean;
   onChange?: (markdown: string) => void;
+  placeholder?: string;
 }
 
 const theme = {
@@ -70,6 +71,7 @@ export default function MarkdownEditor({
   fontSizePx,
   readOnly,
   onChange,
+  placeholder,
 }: MarkdownEditorProps): JSX.Element {
   const initialConfig = useMemo(
     () => ({
@@ -107,7 +109,7 @@ export default function MarkdownEditor({
               aria-label={label}
               aria-readonly={readOnly}
               spellCheck={!readOnly}
-              placeholder={null}
+          placeholder={placeholder ? <div className="lexical-note-placeholder">{placeholder}</div> : null}
             />
           }
           ErrorBoundary={LexicalErrorBoundary}
