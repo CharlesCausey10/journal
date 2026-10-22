@@ -75,7 +75,7 @@ const defaultTaskTemplate = [
 
 function hasCurrentSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
-  if (version !== 1 && version !== 2) return false;
+  if (![1, 2, 3].includes(version)) return false;
 
   const columnsFor = (table: string) =>
     new Set(
@@ -136,11 +136,15 @@ export function initializeSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
   const tables = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
   const isEmpty = version === 0 && tables.length === 0;
-  if (!isEmpty && version !== 1 && version !== 2) {
+  if (!isEmpty && ![1, 2, 3].includes(version)) {
     throw new Error('This database version is not supported. Use a compatible Journal release.');
   }
-  if (version === 2) {
+  if (version === 2 || version === 3) {
     if (!hasCurrentSchema(connection)) throw new Error('The database schema is damaged or unsupported.');
+    if (version === 2) {
+      connection.exec('CREATE INDEX IF NOT EXISTS entries_block_date_updated ON entries (block_id, entry_date, updated_at)');
+      connection.pragma('user_version = 3');
+    }
     return;
   }
   if (version === 1) {
@@ -232,7 +236,8 @@ export function initializeSchema(connection: Database.Database) {
     }
   }
   if (hasCurrentSchema(connection)) {
-    connection.pragma('user_version = 2');
+    connection.exec('CREATE INDEX IF NOT EXISTS entries_block_date_updated ON entries (block_id, entry_date, updated_at)');
+    connection.pragma('user_version = 3');
     return;
   }
   if (!isEmpty) throw new Error('The existing database could not be migrated safely.');
@@ -264,6 +269,7 @@ export function initializeSchema(connection: Database.Database) {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE INDEX entries_block_date_updated ON entries (block_id, entry_date, updated_at);
 
       CREATE TABLE user_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -298,7 +304,7 @@ export function initializeSchema(connection: Database.Database) {
       .prepare(`UPDATE blocks SET template_content = ?
                 WHERE placement = 'right' AND label = 'Tasks'`)
       .run(defaultTaskTemplate);
-    connection.pragma('user_version = 2');
+    connection.pragma('user_version = 3');
   });
   initialize();
 }
@@ -723,19 +729,29 @@ export function saveEntry(input: SaveEntryInput): Entry {
   const now = new Date().toISOString();
   const block = connection
     .prepare(
-      `SELECT id, reset_frequency AS resetFrequency
+      `SELECT id, reset_frequency AS resetFrequency,
+              previous_entry_block_id AS previousEntryBlockId
        FROM blocks WHERE id = ? AND is_active = 1`,
     )
-    .get(input.blockId) as { id: number; resetFrequency: ResetFrequency } | undefined;
+    .get(input.blockId) as { id: number; resetFrequency: ResetFrequency; previousEntryBlockId: number | null } | undefined;
   if (!block) throw new Error('Unknown journal block');
+  if (block.previousEntryBlockId !== null) throw new Error('Linked journal blocks are read-only');
   const storedEntryDate = periodKey(input.entryDate, block.resetFrequency);
   const existing = input.id
     ? (connection
-        .prepare('SELECT id, created_at FROM entries WHERE id = ?')
+        .prepare('SELECT id, created_at, block_id, entry_date FROM entries WHERE id = ?')
         .get(input.id) as
-        | { id: string; created_at: string }
+        | { id: string; created_at: string; block_id: number; entry_date: string }
         | undefined)
     : undefined;
+  if (existing) {
+    if (existing.block_id !== input.blockId || existing.entry_date !== storedEntryDate) {
+      throw new Error('An existing entry cannot be moved to another block or period');
+    }
+    if (existing.entry_date < periodKey(todayDate, block.resetFrequency)) {
+      throw new Error('Past journal entries are read-only');
+    }
+  }
   const id = existing?.id ?? input.id ?? randomUUID();
 
   connection
@@ -769,6 +785,14 @@ export function saveEntry(input: SaveEntryInput): Entry {
 }
 
 export function deleteEntry(id: string): boolean {
+  const entry = db().prepare(
+    `SELECT e.entry_date AS entryDate, b.reset_frequency AS resetFrequency
+     FROM entries e JOIN blocks b ON b.id = e.block_id WHERE e.id = ?`,
+  ).get(id) as { entryDate: string; resetFrequency: ResetFrequency } | undefined;
+  const today = localDateString(new Date());
+  if (entry && entry.entryDate !== periodKey(today, entry.resetFrequency) && entry.entryDate < today) {
+    throw new Error('Past journal entries are read-only');
+  }
   return db().prepare('DELETE FROM entries WHERE id = ?').run(id).changes > 0;
 }
 

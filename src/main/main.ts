@@ -10,12 +10,14 @@
  */
 import path from 'path';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { app, BrowserWindow, Menu, shell, ipcMain, screen } from 'electron';
+import { pathToFileURL } from 'node:url';
+import { app, BrowserWindow, Menu, shell, ipcMain, screen, protocol, net } from 'electron';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import startAutoUpdates from './updates';
 import initializeWithRecovery from './database-recovery';
+import { assertTrustedSender, isAllowedExternalUrl, rendererAssetPath } from './security';
 import {
   closeDatabase,
   addBlock,
@@ -39,11 +41,18 @@ import {
 // Keep local development separate from the installed app's personal data.
 // Configure this before opening the database or creating any browser windows.
 if (!app.isPackaged) {
-  const developmentDataPath = path.join(app.getPath('appData'), 'Journal Development');
+  const developmentDataPath = process.env.JOURNAL_SMOKE_TEST_DATA
+    ? path.resolve(process.env.JOURNAL_SMOKE_TEST_DATA)
+    : path.join(app.getPath('appData'), 'Journal Development');
   mkdirSync(developmentDataPath, { recursive: true });
   app.setPath('userData', developmentDataPath);
   app.setPath('sessionData', developmentDataPath);
 }
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'journal',
+  privileges: { standard: true, secure: true, supportFetchAPI: true },
+}]);
 
 let mainWindow: BrowserWindow | null = null;
 const hasInstanceLock = app.requestSingleInstanceLock();
@@ -112,21 +121,22 @@ function scheduleWindowStateSave() {
   }, 300);
 }
 
-ipcMain.on('ipc-example', async (event, arg) => {
-  const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
-  console.log(msgTemplate(arg));
-  event.reply('ipc-example', msgTemplate('pong'));
-});
+function handle(channel: string, listener: Parameters<typeof ipcMain.handle>[1]) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event, mainWindow?.webContents, resolveHtmlPath('index.html'));
+    return listener(event, ...args);
+  });
+}
 
-ipcMain.handle('entries:list', () => listEntries());
-ipcMain.handle('entries:list-for-date', (_event, entryDate: unknown) => {
+handle('entries:list', () => listEntries());
+handle('entries:list-for-date', (_event, entryDate: unknown) => {
   if (typeof entryDate !== 'string') {
     throw new TypeError('Entry date must be a string');
   }
   return listEntriesForDate(entryDate);
 });
-ipcMain.handle('blocks:list', () => listBlocks());
-ipcMain.handle('blocks:add', (_event, input: unknown) => {
+handle('blocks:list', () => listBlocks());
+handle('blocks:add', (_event, input: unknown) => {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -143,11 +153,11 @@ ipcMain.handle('blocks:add', (_event, input: unknown) => {
     input.placement as 'header' | 'footer' | 'left' | 'right' | 'center',
   );
 });
-ipcMain.handle('blocks:remove', (_event, id: unknown) => {
+handle('blocks:remove', (_event, id: unknown) => {
   if (typeof id !== 'number') throw new TypeError('Invalid panel id');
   return removeBlock(id);
 });
-ipcMain.handle('blocks:move', (_event, input: unknown) => {
+handle('blocks:move', (_event, input: unknown) => {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -167,7 +177,7 @@ ipcMain.handle('blocks:move', (_event, input: unknown) => {
     input.position,
   );
 });
-ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
+handle('blocks:update-settings', (_event, input: unknown) => {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -216,7 +226,7 @@ ipcMain.handle('blocks:update-settings', (_event, input: unknown) => {
         : undefined,
   }, input.anchorDate);
 });
-ipcMain.handle('layout:set-size', (_event, input: unknown) => {
+handle('layout:set-size', (_event, input: unknown) => {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -237,14 +247,14 @@ ipcMain.handle('layout:set-size', (_event, input: unknown) => {
     'blockId' in input ? input.blockId as number : undefined,
   );
 });
-ipcMain.handle('layout:get', () => getLayoutSettings());
-ipcMain.handle('layout:set-center-orientation', (_event, value: unknown) => {
+handle('layout:get', () => getLayoutSettings());
+handle('layout:set-center-orientation', (_event, value: unknown) => {
   if (value !== 'horizontal' && value !== 'vertical' && value !== 'grid') {
     throw new TypeError('Invalid center orientation');
   }
   updateCenterOrientation(value);
 });
-ipcMain.handle('settings:set-font-family', (_event, fontFamily: unknown) => {
+handle('settings:set-font-family', (_event, fontFamily: unknown) => {
   if (
     typeof fontFamily !== 'string' ||
     !['handlee', 'arial', 'georgia', 'trebuchet', 'verdana', 'courier'].includes(fontFamily)
@@ -253,7 +263,7 @@ ipcMain.handle('settings:set-font-family', (_event, fontFamily: unknown) => {
   }
   setFontFamily(fontFamily as 'handlee' | 'arial' | 'georgia' | 'trebuchet' | 'verdana' | 'courier');
 });
-ipcMain.handle('settings:set-color-scheme', (_event, colorScheme: unknown) => {
+handle('settings:set-color-scheme', (_event, colorScheme: unknown) => {
   if (
     typeof colorScheme !== 'string' ||
     !['paper', 'stone', 'sage', 'lavender', 'midnight', 'charcoal'].includes(colorScheme)
@@ -264,11 +274,11 @@ ipcMain.handle('settings:set-color-scheme', (_event, colorScheme: unknown) => {
     colorScheme as 'paper' | 'stone' | 'sage' | 'lavender' | 'midnight' | 'charcoal',
   );
 });
-ipcMain.handle('entries:get', (_event, id: unknown) => {
+handle('entries:get', (_event, id: unknown) => {
   if (typeof id !== 'string') throw new TypeError('Entry id must be a string');
   return getEntry(id);
 });
-ipcMain.handle('entries:save', (_event, input: unknown) => {
+handle('entries:save', (_event, input: unknown) => {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -284,7 +294,7 @@ ipcMain.handle('entries:save', (_event, input: unknown) => {
   }
   return saveEntry(input as SaveEntryInput);
 });
-ipcMain.handle('entries:delete', (_event, id: unknown) => {
+handle('entries:delete', (_event, id: unknown) => {
   if (typeof id !== 'string') throw new TypeError('Entry id must be a string');
   return deleteEntry(id);
 });
@@ -357,6 +367,11 @@ const createWindow = async () => {
     icon: getAssetPath('icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      webviewTag: false,
     },
   });
 
@@ -396,9 +411,18 @@ const createWindow = async () => {
 
   // Open urls in the user's browser
   mainWindow.webContents.setWindowOpenHandler((edata) => {
-    shell.openExternal(edata.url);
+    if (isAllowedExternalUrl(edata.url)) {
+      void shell.openExternal(edata.url).catch((error: unknown) => {
+        log.warn('Could not open external link', error);
+      });
+    }
     return { action: 'deny' };
   });
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  mainWindow.webContents.on('will-frame-navigate', (event) => event.preventDefault());
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
 
   await mainWindow.loadURL(resolveHtmlPath('index.html'));
 };
@@ -432,6 +456,11 @@ app
   .whenReady()
   .then(async () => {
     if (!hasInstanceLock) return;
+    protocol.handle('journal', (request) => {
+      const filename = rendererAssetPath(request.url, path.join(__dirname, '../renderer'));
+      if (request.method !== 'GET' || !filename) return new Response(null, { status: 403 });
+      return net.fetch(pathToFileURL(filename).href);
+    });
     if (!(await initializeWithRecovery())) {
       app.quit();
       return;

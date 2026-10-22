@@ -1,18 +1,25 @@
 const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const port = Number(process.env.SMOKE_PORT || 1213);
 const debugPort = Number(process.env.SMOKE_DEBUG_PORT || 9335);
 const windows = process.platform === 'win32';
 const linuxCi = Boolean(process.env.CI) && process.platform === 'linux';
+const preview = process.env.SMOKE_PREVIEW === '1';
+const temporaryRoot = path.resolve(os.tmpdir());
+const testData = fs.mkdtempSync(path.join(temporaryRoot, 'journal-smoke-'));
 const child = spawn(
   windows ? 'npm.cmd' : 'npm',
   [
-    'start',
+    ...(preview ? ['run', 'preview'] : ['start']),
     '--',
-    '--remoteDebuggingPort',
-    String(debugPort),
+    ...(preview
+      ? ['--skipBuild', '--', `--remote-debugging-port=${debugPort}`]
+      : ['--remoteDebuggingPort', String(debugPort)]),
   ],
   {
     detached: !windows,
@@ -20,14 +27,15 @@ const child = spawn(
     env: {
       ...process.env,
       PORT: String(port),
+      REMOTE_DEBUGGING_PORT: String(debugPort),
+      JOURNAL_SMOKE_TEST_DATA: testData,
+      ELECTRON_CLI_ARGS: JSON.stringify([
+        ...(preview ? [`--remote-debugging-port=${debugPort}`] : []),
+        ...(linuxCi ? ['--disable-gpu', '--disable-software-rasterizer', '--disable-dev-shm-usage'] : []),
+      ]),
       ...(linuxCi
         ? {
             NO_SANDBOX: '1',
-            ELECTRON_CLI_ARGS: JSON.stringify([
-              '--disable-gpu',
-              '--disable-software-rasterizer',
-              '--disable-dev-shm-usage',
-            ]),
           }
         : {}),
     },
@@ -70,7 +78,7 @@ async function main() {
       return targets.find(
         (entry) =>
           entry.type === 'page' &&
-          entry.url.startsWith(`http://localhost:${port}`),
+          entry.url.startsWith(preview ? 'journal://app/' : `http://localhost:${port}`),
       );
     } catch {
       return null;
@@ -141,12 +149,14 @@ async function main() {
     await evaluate('Boolean(document.querySelector(".date-selector input[type=date]"))'),
     true,
   );
-  assert.equal(
-    await evaluate(
-      'new Promise((resolve) => { window.electron.ipcRenderer.once("ipc-example", resolve); window.electron.ipcRenderer.sendMessage("ipc-example", ["smoke-test"]); })',
-    ),
-    'IPC test: pong',
-  );
+  assert.equal(await evaluate('window.electron.blocks.list().then(Array.isArray)'), true);
+  assert.equal(await evaluate('typeof window.electron.ipcRenderer'), 'undefined');
+  if (preview) {
+    assert.equal(
+      await evaluate(`document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.includes("script-src 'self';")`),
+      true,
+    );
+  }
   assert.deepEqual(exceptions, []);
   console.log(
     'Electron startup passed: Journal layout, date selector, preload IPC, and no renderer exceptions.',
@@ -167,6 +177,10 @@ main()
         }
         if (signal === 'SIGTERM') await delay(1000);
       }
+    }
+    const resolvedData = path.resolve(testData);
+    if (path.dirname(resolvedData) === temporaryRoot && path.basename(resolvedData).startsWith('journal-smoke-')) {
+      fs.rmSync(resolvedData, { recursive: true, force: true, maxRetries: 3 });
     }
   })
   .catch((error) => {

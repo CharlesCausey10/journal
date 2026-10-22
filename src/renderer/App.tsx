@@ -444,7 +444,8 @@ function Home() {
   const [panelError, setPanelError] = useState('');
   const [settingsError, setSettingsError] = useState('');
   const sizeSaveTimers = useRef(new Map<string, number>());
-  const [entryDate, setEntryDate] = useState(today());
+  const [entryDate, setEntryDate] = useState(today);
+  const [todayDate, setTodayDate] = useState(today);
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
   const [layoutViewport, setLayoutViewport] = useState({
     width: window.innerWidth,
@@ -454,8 +455,37 @@ function Home() {
   useEffect(() => {
     entryDateRef.current = entryDate;
   }, [entryDate]);
-  const todayDate = today();
   const isReadOnlyDate = entryDate < todayDate;
+
+  useEffect(() => {
+    let lastToday = todayDate;
+    let timer: number;
+
+    const checkDate = () => {
+      window.clearTimeout(timer);
+      const nextToday = today();
+      if (nextToday !== lastToday) {
+        const previousToday = lastToday;
+        lastToday = nextToday;
+        setTodayDate(nextToday);
+        setEntryDate((selected) => selected === previousToday ? nextToday : selected);
+      }
+
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      // Check at midnight, with a periodic fallback for sleep or clock changes.
+      timer = window.setTimeout(checkDate, Math.min(midnight.getTime() - now.getTime(), 60_000));
+    };
+
+    checkDate();
+    window.addEventListener('focus', checkDate);
+    document.addEventListener('visibilitychange', checkDate);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', checkDate);
+      document.removeEventListener('visibilitychange', checkDate);
+    };
+  }, [todayDate]);
 
   const handleEntrySaved = (savedEntry: Entry, requestedDate: string) => {
     if (entryDateRef.current !== requestedDate) return;
@@ -471,7 +501,7 @@ function Home() {
   useEffect(() => {
     let isCurrent = true;
 
-    void quoteForDate(today()).then((quote) => {
+    void quoteForDate(todayDate).then((quote) => {
       if (isCurrent) setDailyQuote(quote);
       return quote;
     });
@@ -479,7 +509,7 @@ function Home() {
     return () => {
       isCurrent = false;
     };
-  }, []);
+  }, [todayDate]);
 
   const changeDateByDays = (days: number) => {
     const nextDate = new Date(`${entryDate}T00:00:00`);

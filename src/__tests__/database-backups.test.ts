@@ -74,13 +74,38 @@ afterEach(() => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test('a clean installation initializes version 2 without migration backups', async () => {
+test('a clean installation initializes version 3 without migration backups', async () => {
   const connection = await open();
-  expect(connection.pragma('user_version', { simple: true })).toBe(2);
+  expect(connection.pragma('user_version', { simple: true })).toBe(3);
   expect(connection.prepare('SELECT count(*) AS n FROM blocks').get()).toEqual({
     n: 2,
   });
   expect(fs.existsSync(backupDirectory(directory))).toBe(false);
+});
+
+test('version 2 adds the query index with verified backups and preserves entries', async () => {
+  const original = seed();
+  original.exec('DROP INDEX entries_block_date_updated; PRAGMA user_version = 2');
+  original.close();
+  const connection = await open();
+  expect(connection.pragma('user_version', { simple: true })).toBe(3);
+  expect(manifest(sets()[0])).toMatchObject({ fromSchema: 2, toSchema: 3, status: 'complete' });
+  expect(contents()).toHaveLength(1);
+  const plans = connection.prepare(
+    'EXPLAIN QUERY PLAN SELECT * FROM entries WHERE block_id = ? AND entry_date = ? ORDER BY updated_at DESC LIMIT 1',
+  ).all(1, '2026-10-20') as { detail: string }[];
+  expect(plans.some(({ detail }) => detail.includes('entries_block_date_updated'))).toBe(true);
+  expect(plans.some(({ detail }) => detail.includes('SCAN entries') || detail.includes('TEMP B-TREE'))).toBe(false);
+});
+
+test('routine startup uses one quick check without exhaustive integrity scans', async () => {
+  (await open()).close();
+  const spy = jest.spyOn(Database.prototype, 'pragma');
+  await open();
+  const checks = spy.mock.calls.map(([statement]) => statement);
+  expect(checks.filter((statement) => statement === 'quick_check')).toHaveLength(1);
+  expect(checks).not.toContain('integrity_check');
+  expect(checks).not.toContain('foreign_key_check');
 });
 
 test.each([false, true])(
@@ -100,14 +125,14 @@ test.each([false, true])(
     );
     const connection = await open();
     original.close();
-    expect(connection.pragma('user_version', { simple: true })).toBe(2);
+    expect(connection.pragma('user_version', { simple: true })).toBe(3);
     const [folder] = sets();
     expect(manifest(folder)).toMatchObject({
       status: 'complete',
       beforeVerified: true,
       afterVerified: true,
       fromSchema: 1,
-      toSchema: 2,
+      toSchema: 3,
     });
     expect(contents(path.join(folder, 'before.sqlite'))).toEqual(expected);
     expect(contents(path.join(folder, 'after.sqlite'))).toEqual(expected);

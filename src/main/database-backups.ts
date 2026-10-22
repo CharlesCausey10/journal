@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const currentVersion = 2;
+const currentVersion = 3;
 type Connection = Database.Database;
 type Manifest = {
   id: string;
@@ -222,7 +222,6 @@ export async function openProtectedDatabase(options: {
   let manifest: Manifest | undefined;
   try {
     connection.pragma('foreign_keys = ON');
-    validateDatabase(connection);
     const version = connection.pragma('user_version', {
       simple: true,
     }) as number;
@@ -233,15 +232,24 @@ export async function openProtectedDatabase(options: {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
         )
         .all().length;
-    if (!empty && version !== 1 && version !== currentVersion) {
+    if (!empty && ![1, 2, currentVersion].includes(version)) {
       throw new Error(
         'This database version is unsupported. Please use a compatible Journal release.',
       );
     }
+    if (version === currentVersion) {
+      // Routine startup checks structural health once; migrations and recovery
+      // retain exhaustive integrity and relationship validation.
+      if (connection.pragma('quick_check', { simple: true }) !== 'ok') {
+        throw new Error('Database integrity verification failed.');
+      }
+    } else {
+      validateDatabase(connection);
+    }
     if (empty || version === currentVersion) {
       connection.transaction(() => {
         migrate(connection);
-        validateDatabase(connection);
+        if (empty) validateDatabase(connection);
       })();
       // An explicitly retried post-commit failure still needs its after snapshot.
       for (const attempt of attempts(directory)) {
@@ -372,7 +380,7 @@ export async function restoreDatabase(
   const candidate = new Database(staged);
   try {
     const selectedVersion = candidate.pragma('user_version', { simple: true });
-    if (selectedVersion !== 1 && selectedVersion !== currentVersion) {
+    if (![1, 2, currentVersion].includes(selectedVersion as number)) {
       throw new Error(
         'The selected file is not a supported Journal backup; its schema version is not supported.',
       );

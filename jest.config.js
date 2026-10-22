@@ -19,6 +19,8 @@ module.exports = {
     url: 'http://localhost/',
   },
   testPathIgnorePatterns: ['release/app/dist', '.erb/dll'],
+  // Exercise the real editor and its ESM dependencies in renderer tests.
+  transformIgnorePatterns: ['node_modules/(?!(@lexical|lexical|@preact)/)'],
   transform: {
     '\\.(ts|tsx|js|jsx)$': [
       toolingRequire.resolve('ts-jest'),

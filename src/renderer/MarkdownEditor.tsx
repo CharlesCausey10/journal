@@ -97,7 +97,10 @@ export default function MarkdownEditor({
   );
 
   return (
-    <LexicalComposer initialConfig={initialConfig}>
+    // Lexical only reads initialConfig on mount. Historical and linked notes
+    // must reload when their displayed content changes; editable notes retain
+    // their editor instance so typing preserves selection and undo history.
+    <LexicalComposer key={readOnly ? value : undefined} initialConfig={initialConfig}>
       <div
         className={`lexical-note ${readOnly ? 'lexical-note-readonly' : ''}`}
         style={{ fontSize: `${fontSizePx}px` }}

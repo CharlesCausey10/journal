@@ -40,7 +40,19 @@ export default defineConfig({
   renderer: {
     root: path.join(root, 'src/renderer'),
     base: './',
-    plugins: [react({}), svgr()],
+    plugins: [
+      react({}),
+      svgr(),
+      {
+        name: 'development-csp',
+        apply: 'serve',
+        transformIndexHtml(html) {
+          return html
+            .replace("script-src 'self';", "script-src 'self' 'unsafe-inline';")
+            .replace("connect-src 'self';", "connect-src 'self' ws://localhost:*;");
+        },
+      },
+    ],
     server: {
       host: 'localhost',
       port: Number(process.env.PORT || 1212),
