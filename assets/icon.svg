@@ -1,12 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" fill="#faefc6" />
-  <path d="m512 205 318-53 4 660-322 63-322-63 4-660z" fill="#6b2d12" stroke="#481d0f" stroke-width="18" stroke-linejoin="round" />
-  <path d="m492 270-229-44-3 526 232 55z" fill="#fffbe6" stroke="#bb895d" stroke-width="7" stroke-linejoin="round" />
-  <path d="m532 270 229-44 3 526-232 55z" fill="#fffbe6" stroke="#bb895d" stroke-width="7" stroke-linejoin="round" />
-  <path d="M512 269v541" stroke="#945b38" stroke-width="10" />
-  <g fill="none" stroke="#d5b78f" stroke-width="5">
-    <path d="m310 382 146 30m-141 42 141 30m-136 42 136 30m-131 42 131 30m-126 42 126 30" />
-    <path d="m714 382-146 30m141 42-141 30m136 42-136 30m131 42-131 30m126 42-126 30" />
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="235 234 784 784">
+  <path fill="#007747" d="M297 387 C275 387 258 403 258 426 V788 C258 826 284 852 328 856 C467 866 555 894 627 977 V587 C627 516 592 464 517 429 C452 398 379 387 309 387 Z"/>
+  <g fill="#78d58b">
+    <path d="M651 579 V490 C651 390 713 304 817 283 C848 277 882 274 921 275 Q928 275 928 282 C925 382 876 449 792 484 C724 511 677 521 651 579 Z"/>
+    <path d="M651 977 V674 C651 605 702 555 775 526 C831 503 883 491 932 491 H956 C978 491 996 508 996 530 V788 C996 826 969 850 932 855 C808 867 718 895 651 977 Z"/>
   </g>
-  <path d="m598 260 60-11-1 171-30-25-30 35z" fill="#d99e43" stroke="#f2c670" stroke-width="7" stroke-linejoin="round" />
 </svg>
