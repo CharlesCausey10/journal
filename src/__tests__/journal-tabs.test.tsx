@@ -10,6 +10,10 @@ jest.mock('../renderer/dailyQuotes', () => ({
 jest.mock('../renderer/MarkdownEditor.js', () =>
   jest.requireActual('../renderer/MarkdownEditor'), { virtual: true });
 
+// Load the real editor during suite setup rather than charging its cold module
+// compilation to the first interaction test's deadline on a fresh CI runner.
+jest.requireMock('../renderer/MarkdownEditor.js');
+
 beforeEach(() => {
   jest.useFakeTimers({ now: new Date(2026, 9, 22, 12) });
   const blocks: Block[] = ['Daily', 'Long-Term Goals', 'Reading'].map((label, index) => ({

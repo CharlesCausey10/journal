@@ -168,6 +168,12 @@ async function run(reopen) {
       if (alert) throw Error(alert);
       return false;
     }, 'the Notes editor');
+    await until(() => evaluate(`
+      (!document.documentElement.dataset.startupState ||
+        document.documentElement.dataset.startupState === 'visible') &&
+      getComputedStyle(${editor}).visibility === 'visible' &&
+      Number(getComputedStyle(document.querySelector('.journal-page')).opacity) >= 0.99
+    `), 'the loaded journal to finish appearing');
     if (reopen) {
       assert.equal(await evaluate(editor + '.innerText.trim()'), note);
       assert.equal(
