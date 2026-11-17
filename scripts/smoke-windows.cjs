@@ -43,6 +43,25 @@ async function run(reopen) {
       '--log-file=' + JSON.stringify(path.join(runDiagnostics, 'webview.log')),
     );
   }
+  const policyState = path.join(runDiagnostics, 'previous-webview-policy.json');
+  const policyHelper = path.resolve('scripts/windows-ci-webview-policy.ps1');
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        policyHelper,
+        '-StateFile',
+        policyState,
+        '-BrowserArguments',
+        browserArguments.join(' '),
+      ],
+      { timeout: 10000, windowsHide: true, stdio: 'pipe' },
+    );
+  }
   const child = spawn(exe, [], {
     windowsHide: true,
     env: {
@@ -226,6 +245,22 @@ async function run(reopen) {
   } finally {
     socket?.close();
     if (child.exitCode === null) child.kill();
+    if (process.env.GITHUB_ACTIONS === 'true' && fs.existsSync(policyState)) {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          policyHelper,
+          '-StateFile',
+          policyState,
+          '-Restore',
+        ],
+        { timeout: 10000, windowsHide: true, stdio: 'pipe' },
+      );
+    }
   }
 }
 

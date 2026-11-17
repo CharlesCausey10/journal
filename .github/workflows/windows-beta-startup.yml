@@ -1,0 +1,41 @@
+name: Windows published beta startup
+on:
+  push:
+    branches: [codex/tauri-beta]
+    paths:
+      - .github/workflows/windows-beta-startup.yml
+      - scripts/smoke-windows.cjs
+      - scripts/collect-windows-startup.ps1
+      - scripts/windows-ci-webview-policy.ps1
+permissions:
+  contents: read
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download the published beta executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force output/test-temp | Out-Null
+          $archive=Join-Path $PWD 'output/test-temp/published-beta.zip'
+          Invoke-WebRequest 'https://github.com/CharlesCausey10/journal/releases/download/v1.2.0-beta.1/Journal-1.2.0-beta.1-Windows-Rollback.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive).Hash -ne '36A9FC2A6BDAB3D9B19E214ABBE2FEA8E57AC56E7531A9D739F2DDB4F3C0A82A') {
+            throw 'Published beta checksum mismatch'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath output/test-temp/published-beta
+      - name: Verify writing, close and reopen against the published app
+        run: node scripts/smoke-windows.cjs output/test-temp/published-beta/Journal.exe
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: published-beta-startup-diagnostics
+          path: |
+            output/test-temp/windows-startup.json
+            output/test-temp/first-launch/
+            output/test-temp/reopen/
