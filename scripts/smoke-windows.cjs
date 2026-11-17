@@ -59,7 +59,7 @@ async function run(reopen) {
         '-BrowserArguments',
         browserArguments.join(' '),
       ],
-      { timeout: 10000, windowsHide: true, stdio: 'pipe' },
+      { timeout: 30000, windowsHide: true, stdio: 'pipe' },
     );
   }
   const child = spawn(exe, [], {
@@ -258,7 +258,7 @@ async function run(reopen) {
           policyState,
           '-Restore',
         ],
-        { timeout: 10000, windowsHide: true, stdio: 'pipe' },
+        { timeout: 30000, windowsHide: true, stdio: 'pipe' },
       );
     }
   }

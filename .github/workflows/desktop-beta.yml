@@ -2,6 +2,8 @@ name: Package desktop beta
 on:
   push:
     tags: ['v*-beta.*']
+    branches: [codex/tauri-beta]
+    paths: [.github/workflows/desktop-beta.yml]
 permissions:
   contents: write
 jobs:
@@ -9,11 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            args: --bundles nsis
-          - os: macos-15-intel
-            args: --target universal-apple-darwin --bundles app,dmg
+        # Editing this workflow on the beta branch retries Windows packaging.
+        # Version tags build both supported desktop installers.
+        os: ${{ github.ref_type == 'tag' && fromJSON('["windows-latest","macos-15-intel"]') || fromJSON('["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,13 +24,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+      - name: Read release version
+        shell: bash
+        run: echo "BETA_TAG=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run lint
       - run: npm exec tsc -- --noEmit
       - run: npm test -- --runInBand
       - run: npm run build:web
       - run: npm run test:native
-      - run: npm run package -- ${{ matrix.args }}
+      - run: npm run package -- ${{ runner.os == 'macOS' && '--target universal-apple-darwin --bundles app,dmg' || '--bundles nsis' }}
       - if: runner.os == 'Windows'
         run: node scripts/smoke-windows.cjs src-tauri/target/release/journal.exe
       - name: Attach Windows installer
@@ -38,13 +41,13 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/nsis/*.exe --clobber
+        run: gh release upload "$BETA_TAG" src-tauri/target/release/bundle/nsis/*.exe --clobber
       - name: Attach universal Mac installer
         if: runner.os == 'macOS'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg --clobber
+        run: gh release upload "$BETA_TAG" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg --clobber
       - uses: actions/upload-artifact@v4
         if: failure() && runner.os == 'Windows'
         with:
