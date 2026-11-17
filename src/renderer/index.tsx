@@ -8,18 +8,30 @@ const root = createRoot(document.getElementById('root') as HTMLElement);
 const native = window.__TAURI__.core;
 const desktop = window.__TAURI__.window.getCurrentWindow();
 
-// Allow the themed DOM to reach a paint before making the native window visible.
-window.addEventListener('journal-ready', () => {
-  let shown = false;
-  const reveal = () => {
-    if (shown) return;
-    shown = true;
+// Hidden webviews may suspend frames, so each paint wait has a bounded fallback.
+function afterPaint(callback: () => void) {
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
     clearTimeout(fallback);
-    void native.invoke('show_ready_window').catch(console.error);
+    callback();
   };
-  // Some webviews suspend animation frames while hidden.
-  const fallback = window.setTimeout(reveal, 150);
-  requestAnimationFrame(() => requestAnimationFrame(reveal));
+  const fallback = window.setTimeout(finish, 150);
+  requestAnimationFrame(() => requestAnimationFrame(finish));
+}
+
+window.addEventListener('journal-ready', () => {
+  afterPaint(() => {
+    void native.invoke('show_ready_window').then(() => {
+      // First show the matching solid background, then fade in the loaded content.
+      afterPaint(() => { document.documentElement.dataset.startupState = 'visible'; });
+      return undefined;
+    }).catch((error) => {
+      document.documentElement.dataset.startupState = 'visible';
+      console.error(error);
+    });
+  });
 }, { once: true });
 
 function Recovery({ reason }: { reason: string }) {

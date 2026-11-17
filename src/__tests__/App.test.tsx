@@ -87,6 +87,28 @@ describe('Journal app', () => {
     }
   });
 
+  it('waits for local fonts before signaling startup readiness', async () => {
+    let finishFonts!: () => void;
+    const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { ready: new Promise<void>((resolve) => { finishFonts = resolve; }) },
+    });
+    const ready = jest.fn();
+    window.addEventListener('journal-ready', ready);
+    try {
+      render(<App />);
+      await screen.findByText('Morning notes');
+      expect(ready).not.toHaveBeenCalled();
+      await act(async () => finishFonts());
+      expect(ready).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('journal-ready', ready);
+      if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts);
+      else Reflect.deleteProperty(document, 'fonts');
+    }
+  });
+
   it('advances at local midnight and refreshes entries and the quote', async () => {
     const { unmount } = render(<App />);
     await screen.findByText('Morning notes');

@@ -36,6 +36,7 @@
     "src/__tests__/App.test.tsx",
     "src/__tests__/journal-tabs.test.tsx",
     "src/__tests__/checklist-order.test.ts",
-    "assets"
+    "assets",
+    "src/__tests__/startup-appearance.test.ts"
   ]
 }

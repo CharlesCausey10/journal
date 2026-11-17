@@ -194,16 +194,14 @@ function BlockEditor({ block, entry, entryDate, readOnly, moveCheckedToBottom, o
           </span>
         </span>
       )}
-      <Suspense fallback={null}>
-        <MarkdownEditor
-          value={content}
-          label={block.label}
-          fontSizePx={block.fontSizePx}
-          readOnly={readOnly}
-          moveCheckedToBottom={moveCheckedToBottom}
-          onChange={readOnly ? undefined : setContent}
-        />
-      </Suspense>
+      <MarkdownEditor
+        value={content}
+        label={block.label}
+        fontSizePx={block.fontSizePx}
+        readOnly={readOnly}
+        moveCheckedToBottom={moveCheckedToBottom}
+        onChange={readOnly ? undefined : setContent}
+      />
     </div>
   );
 }
@@ -221,14 +219,12 @@ function PastNote({
     <article className={`past-note placement-${block.placement}`}>
       {showTitle && <h2>{block.label}</h2>}
       <div className="past-note-content" style={{ fontSize: `${block.fontSizePx}px` }}>
-        <Suspense fallback={null}>
-          <MarkdownEditor
-            value={content}
-            label={block.label}
-            fontSizePx={block.fontSizePx}
-            readOnly
-          />
-        </Suspense>
+        <MarkdownEditor
+          value={content}
+          label={block.label}
+          fontSizePx={block.fontSizePx}
+          readOnly
+        />
       </div>
     </article>
   );
@@ -293,17 +289,15 @@ function TemplatePane({
             Shows the most recent earlier entry from “{linkedSourceLabel ?? 'another block'}”. This block is read-only.
           </div>
         ) : (
-          <Suspense fallback={null}>
-            <MarkdownEditor
-              value={content}
-              label={`${block.label} template`}
-              fontSizePx={block.fontSizePx}
-              readOnly={false}
-              moveCheckedToBottom={moveCheckedToBottom}
-              placeholder="Default content..."
-              onChange={changeContent}
-            />
-          </Suspense>
+          <MarkdownEditor
+            value={content}
+            label={`${block.label} template`}
+            fontSizePx={block.fontSizePx}
+            readOnly={false}
+            moveCheckedToBottom={moveCheckedToBottom}
+            placeholder="Default content..."
+            onChange={changeContent}
+          />
         )}
       </div>
     </div>
@@ -880,11 +874,31 @@ function Home() {
   useLayoutEffect(() => {
     const page = document.querySelector('.journal-page');
     if (page) {
-      document.body.style.backgroundColor = getComputedStyle(page)
-        .getPropertyValue('--theme-page').trim();
-      if (!loading) window.dispatchEvent(new Event('journal-ready'));
+      const background = getComputedStyle(page).getPropertyValue('--theme-page').trim();
+      document.documentElement.style.setProperty('--startup-background', background);
+      document.documentElement.style.backgroundColor = background;
+      document.body.style.backgroundColor = background;
+      if (!loading && !loadError) {
+        try {
+          localStorage.setItem('journal-startup-appearance', JSON.stringify({
+            theme: settings.colorScheme, background,
+          }));
+        } catch { /* Appearance still works when browser storage is unavailable. */ }
+      }
     }
-  }, [settings.colorScheme, loading]);
+  }, [settings.colorScheme, loading, loadError]);
+
+  useEffect(() => {
+    if (loading) return undefined;
+    let cancelled = false;
+    // Wait for editor commit effects and local fonts as well as the entry queries.
+    const fonts = document.fonts?.ready ?? Promise.resolve();
+    void fonts.then(() => {
+      if (!cancelled) window.dispatchEvent(new Event('journal-ready'));
+      return undefined;
+    });
+    return () => { cancelled = true; };
+  }, [loading]);
 
   const movePanel = async (
     blockId: number,
@@ -1059,7 +1073,7 @@ function Home() {
   if (loading) return null;
 
   return (
-    <main className={`journal-page theme-${settings.colorScheme} app-ready${editingLayout ? ' layout-edit-mode' : ''}`}>
+    <main className={`journal-page theme-${settings.colorScheme}${editingLayout ? ' layout-edit-mode' : ''}`}>
       {loadError ? (
         <p className="load-message" role="alert">
           Could not load or save the journal layout.
@@ -1362,7 +1376,7 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Suspense fallback={null}><Home /></Suspense>} />
       </Routes>
     </Router>
   );

@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '../renderer/App';
-import type { Block } from '../shared/journal';
+import type { Block, Entry } from '../shared/journal';
 
 jest.mock('../renderer/dailyQuotes', () => ({
   quoteForDate: jest.fn().mockResolvedValue({ text: 'Quote', author: 'Author' }),
@@ -66,4 +66,27 @@ test('past tabs display their own content and refresh across dates', async () =>
   expect(screen.getByRole('textbox', { name: 'Daily' })).toHaveTextContent('Daily entry for 2026-10-20');
   await act(async () => { fireEvent.click(screen.getByRole('tab', { name: 'Reading' })); });
   expect(screen.getByRole('textbox', { name: 'Reading' })).toHaveTextContent('Reading persistent content');
+});
+
+test('waits for entry queries and populated editors before signaling startup readiness', async () => {
+  let finishEntries!: (entries: Entry[]) => void;
+  jest.mocked(window.journal.entries.listForDate).mockReturnValueOnce(new Promise((resolve) => {
+    finishEntries = resolve;
+  }));
+  const ready = jest.fn(() => screen.getByRole('textbox', { name: 'Daily' }).textContent);
+  window.addEventListener('journal-ready', ready);
+  try {
+    render(<App />);
+    expect(screen.queryByRole('tab', { name: 'Daily' })).not.toBeInTheDocument();
+    expect(ready).not.toHaveBeenCalled();
+    await act(async () => finishEntries([{
+      id: 'saved', blockId: 1, entryDate: '2026-10-22',
+      content: 'Saved journal text is ready', createdAt: 'created', updatedAt: 'updated',
+    }]));
+    await screen.findByRole('textbox', { name: 'Daily' });
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(ready.mock.results[0].value).toContain('Saved journal text is ready');
+  } finally {
+    window.removeEventListener('journal-ready', ready);
+  }
 });

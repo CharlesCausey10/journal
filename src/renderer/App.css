@@ -2,6 +2,10 @@
   box-sizing: border-box;
 }
 
+html, body {
+  background-color: var(--startup-background, #e6e7e3);
+}
+
 body {
   position: relative;
   height: 100vh;
@@ -10,7 +14,6 @@ body {
   color: rgb(107, 45, 18);
   font-family: sans-serif;
   overflow: hidden;
-  background-color: rgb(241, 220, 158);
 }
 
 #root,
@@ -30,14 +33,14 @@ body {
   --card-shadow: 0 1px 2px rgba(38, 29, 14, 0.09), 0 3px 7px rgba(38, 29, 14, 0.07);
   color: var(--theme-ink);
   background-color: var(--theme-page);
-  opacity: 0;
-  visibility: hidden;
+  opacity: 1;
   transition: opacity 180ms ease-out;
 }
 
-.journal-page.app-ready {
-  opacity: 1;
-  visibility: visible;
+html[data-startup-state="loading"] .journal-page {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
