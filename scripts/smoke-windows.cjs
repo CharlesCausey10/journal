@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { once } = require('node:events');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -31,32 +31,76 @@ async function run(reopen) {
   await once(server, 'listening');
   const port = server.address().port;
   await new Promise((resolve) => server.close(resolve));
+  const runDiagnostics = path.join(
+    diagnostics,
+    reopen ? 'reopen' : 'first-launch',
+  );
+  fs.mkdirSync(runDiagnostics, { recursive: true });
+  const browserArguments = ['--remote-debugging-port=' + port];
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    browserArguments.push(
+      '--enable-logging',
+      '--log-file=' + JSON.stringify(path.join(runDiagnostics, 'webview.log')),
+    );
+  }
   const child = spawn(exe, [], {
     windowsHide: true,
     env: {
       ...process.env,
       JOURNAL_SMOKE_TEST_DATA: directory,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: browserArguments.join(' '),
     },
   });
   let launchError;
   let output = '';
   let targets = [];
-  child.on('error', (error) => { launchError = error; });
-  child.stdout.on('data', (chunk) => { output += chunk.toString(); });
-  child.stderr.on('data', (chunk) => { output += chunk.toString(); });
+  const endpoint = {
+    attempts: 0,
+    successes: 0,
+    lastError: null,
+    status: null,
+    body: null,
+  };
+  child.on('error', (error) => {
+    launchError = error;
+  });
+  child.stdout.on('data', (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr.on('data', (chunk) => {
+    output += chunk.toString();
+  });
   let socket;
   try {
     const target = await until(async () => {
       if (launchError) throw launchError;
       if (child.exitCode !== null)
         throw Error('Journal exited with ' + child.exitCode);
-      const response = await fetch(
-        'http://127.0.0.1:' + port + '/json/list',
-      ).catch(() => null);
-      if (!response) return false;
-      targets = await response.json();
-      return targets.find((t) => /^https?:\/\/tauri\.localhost(?:[/:]|$)/.test(t.url));
+      endpoint.attempts += 1;
+      try {
+        const response = await fetch(
+          'http://127.0.0.1:' + port + '/json/list',
+          {
+            signal: AbortSignal.timeout(2000),
+          },
+        );
+        endpoint.successes += 1;
+        endpoint.status = response.status;
+        endpoint.body = await response.text();
+        targets = JSON.parse(endpoint.body);
+        if (!response.ok || !Array.isArray(targets)) {
+          throw Error('Unexpected debugging endpoint response');
+        }
+      } catch (error) {
+        endpoint.lastError = {
+          message: String(error),
+          cause: String(error.cause ?? ''),
+        };
+        return false;
+      }
+      return targets.find((t) =>
+        /^https?:\/\/tauri\.localhost(?:[/:]|$)/.test(t.url),
+      );
     }, 'the local Journal webview');
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -127,15 +171,57 @@ async function run(reopen) {
       assert.equal(await evaluate(editor + '.innerText.trim()'), note);
     }
     // Trigger the real WebView close event during the editor's autosave delay.
-    await evaluate('setTimeout(() => window.__TAURI__.window.getCurrentWindow().close(), 0); true');
+    await evaluate(
+      'setTimeout(() => window.__TAURI__.window.getCurrentWindow().close(), 0); true',
+    );
     await until(() => child.exitCode !== null, 'Journal to exit');
     assert.equal(child.exitCode, 0);
   } catch (error) {
-    fs.writeFileSync(path.join(diagnostics, 'windows-startup.json'), JSON.stringify({
-      error: String(error), executable: exe, directory, port,
-      exitCode: child.exitCode, signal: child.signalCode, targets, output,
-    }, null, 2));
-    console.error('Startup diagnostics', { port, targets, output, directory });
+    fs.writeFileSync(
+      path.join(diagnostics, 'windows-startup.json'),
+      JSON.stringify(
+        {
+          error: String(error),
+          executable: exe,
+          directory,
+          port,
+          exitCode: child.exitCode,
+          signal: child.signalCode,
+          targets,
+          output,
+          endpoint,
+        },
+        null,
+        2,
+      ),
+    );
+    try {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          path.resolve('scripts/collect-windows-startup.ps1'),
+          '-Destination',
+          runDiagnostics,
+        ],
+        { timeout: 30000, windowsHide: true, stdio: 'pipe' },
+      );
+    } catch (collectionError) {
+      console.error(
+        'Could not collect process diagnostics',
+        String(collectionError),
+      );
+    }
+    console.error('Startup diagnostics', {
+      port,
+      targets,
+      output,
+      directory,
+      endpoint,
+    });
     throw error;
   } finally {
     socket?.close();
@@ -148,7 +234,10 @@ async function run(reopen) {
   assert.ok(fs.existsSync(exe), 'Build the Windows app first');
   await run(false);
   await run(true);
-  fs.writeFileSync(path.resolve('output/test-temp/last-smoke-directory.txt'), directory);
+  fs.writeFileSync(
+    path.resolve('output/test-temp/last-smoke-directory.txt'),
+    directory,
+  );
   console.log(
     'Packaged Journal saved an edit on close and reopened it with its checklist preference.',
   );

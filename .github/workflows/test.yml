@@ -29,4 +29,7 @@ jobs:
         if: failure() && runner.os == 'Windows'
         with:
           name: windows-startup-diagnostics
-          path: output/test-temp/windows-startup.json
+          path: |
+            output/test-temp/windows-startup.json
+            output/test-temp/first-launch/
+            output/test-temp/reopen/
