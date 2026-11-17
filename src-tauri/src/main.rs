@@ -1,5 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
@@ -10,6 +16,18 @@ struct Store {
     directory: PathBuf,
     legacy: Option<PathBuf>,
     db: Mutex<Option<rusqlite::Connection>>,
+}
+
+struct StartupReady(Arc<AtomicBool>);
+
+#[tauri::command]
+fn show_ready_window(
+    window: tauri::WebviewWindow,
+    ready: tauri::State<StartupReady>,
+) -> Result<(), String> {
+    window.show().map_err(|error| error.to_string())?;
+    ready.0.store(true, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -151,8 +169,14 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if std::env::var_os("JOURNAL_SMOKE_TEST_DATA").is_none() {
-                app.handle()
-                    .plugin(tauri_plugin_window_state::Builder::default().build())?;
+                app.handle().plugin(
+                    tauri_plugin_window_state::Builder::default()
+                        .with_state_flags(
+                            tauri_plugin_window_state::StateFlags::all()
+                                & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                        )
+                        .build(),
+                )?;
                 if let Some(key) = option_env!("JOURNAL_UPDATER_PUBLIC_KEY") {
                     app.handle()
                         .plugin(tauri_plugin_updater::Builder::new().pubkey(key).build())?;
@@ -196,11 +220,21 @@ fn main() {
                 legacy,
                 db: Mutex::new(None),
             });
-            window.build()?;
+            let ready = Arc::new(AtomicBool::new(false));
+            app.manage(StartupReady(ready.clone()));
+            let window = window.build()?;
+            // Keep startup failures accessible even if the frontend never signals ready.
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                if !ready.swap(true, Ordering::Relaxed) {
+                    let _ = window.show();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             journal_request,
+            show_ready_window,
             check_update,
             apply_update
         ])

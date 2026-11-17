@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { journal, flushJournal } from './desktop';
@@ -8,7 +8,24 @@ const root = createRoot(document.getElementById('root') as HTMLElement);
 const native = window.__TAURI__.core;
 const desktop = window.__TAURI__.window.getCurrentWindow();
 
+// Allow the themed DOM to reach a paint before making the native window visible.
+window.addEventListener('journal-ready', () => {
+  let shown = false;
+  const reveal = () => {
+    if (shown) return;
+    shown = true;
+    clearTimeout(fallback);
+    void native.invoke('show_ready_window').catch(console.error);
+  };
+  // Some webviews suspend animation frames while hidden.
+  const fallback = window.setTimeout(reveal, 150);
+  requestAnimationFrame(() => requestAnimationFrame(reveal));
+}, { once: true });
+
 function Recovery({ reason }: { reason: string }) {
+  useLayoutEffect(() => {
+    window.dispatchEvent(new Event('journal-ready'));
+  }, []);
   const [message, setMessage] = useState(reason);
   const [busy, setBusy] = useState(false);
   async function recover(action: string) {

@@ -877,11 +877,12 @@ function Home() {
     }
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const page = document.querySelector('.journal-page');
     if (page) {
       document.body.style.backgroundColor = getComputedStyle(page)
         .getPropertyValue('--theme-page').trim();
+      if (!loading) window.dispatchEvent(new Event('journal-ready'));
     }
   }, [settings.colorScheme, loading]);
 

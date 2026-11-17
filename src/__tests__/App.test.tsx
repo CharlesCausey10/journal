@@ -69,6 +69,24 @@ describe('Journal app', () => {
     jest.useRealTimers();
   });
 
+  it('signals startup readiness only after the saved theme is rendered', async () => {
+    let finishLoading!: (settings: LayoutSettings) => void;
+    jest.mocked(window.journal.layout.get).mockReturnValueOnce(new Promise((resolve) => {
+      finishLoading = resolve;
+    }));
+    const ready = jest.fn(() => document.querySelector('.journal-page')?.className);
+    window.addEventListener('journal-ready', ready);
+    try {
+      render(<App />);
+      expect(ready).not.toHaveBeenCalled();
+      await act(async () => finishLoading({ ...layoutSettings, colorScheme: 'sage' }));
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(ready.mock.results[0].value).toContain('theme-sage');
+    } finally {
+      window.removeEventListener('journal-ready', ready);
+    }
+  });
+
   it('advances at local midnight and refreshes entries and the quote', async () => {
     const { unmount } = render(<App />);
     await screen.findByText('Morning notes');
