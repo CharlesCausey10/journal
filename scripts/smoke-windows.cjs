@@ -12,9 +12,11 @@ const exe = path.resolve(
 );
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-smoke-'));
 const note = 'Saved when the Journal window closes';
+const diagnostics = path.resolve('output/test-temp');
+fs.mkdirSync(diagnostics, { recursive: true });
 
 async function until(get, description) {
-  const deadline = Date.now() + 45000;
+  const deadline = Date.now() + (process.env.CI ? 180000 : 45000);
   while (Date.now() < deadline) {
     const value = await get();
     if (value) return value;
@@ -37,20 +39,24 @@ async function run(reopen) {
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port,
     },
   });
+  let launchError;
+  let output = '';
+  let targets = [];
+  child.on('error', (error) => { launchError = error; });
+  child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { output += chunk.toString(); });
   let socket;
   try {
     const target = await until(async () => {
+      if (launchError) throw launchError;
       if (child.exitCode !== null)
         throw Error('Journal exited with ' + child.exitCode);
       const response = await fetch(
         'http://127.0.0.1:' + port + '/json/list',
       ).catch(() => null);
-      return (
-        response &&
-        (await response.json()).find((t) =>
-          /^https?:\/\/tauri\.localhost/.test(t.url),
-        )
-      );
+      if (!response) return false;
+      targets = await response.json();
+      return targets.find((t) => /^https?:\/\/tauri\.localhost(?:[/:]|$)/.test(t.url));
     }, 'the local Journal webview');
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -124,6 +130,13 @@ async function run(reopen) {
     await evaluate('setTimeout(() => window.__TAURI__.window.getCurrentWindow().close(), 0); true');
     await until(() => child.exitCode !== null, 'Journal to exit');
     assert.equal(child.exitCode, 0);
+  } catch (error) {
+    fs.writeFileSync(path.join(diagnostics, 'windows-startup.json'), JSON.stringify({
+      error: String(error), executable: exe, directory, port,
+      exitCode: child.exitCode, signal: child.signalCode, targets, output,
+    }, null, 2));
+    console.error('Startup diagnostics', { port, targets, output, directory });
+    throw error;
   } finally {
     socket?.close();
     if (child.exitCode === null) child.kill();
