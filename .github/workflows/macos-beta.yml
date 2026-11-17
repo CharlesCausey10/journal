@@ -1,0 +1,30 @@
+name: Package macOS beta
+on:
+  push:
+    branches: [codex/tauri-beta]
+    paths: [.github/workflows/macos-beta.yml]
+permissions:
+  contents: write
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - run: npm ci
+      - run: npm exec tsc -- --noEmit
+      - run: npm test -- --runInBand
+      - run: npm run build:web
+      - run: npm run test:native
+      - name: Build Intel and Apple Silicon installer
+        run: npm run package -- --target universal-apple-darwin --bundles app,dmg
+      - name: Attach macOS installer to beta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload v1.2.0-beta.1 src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg --clobber
