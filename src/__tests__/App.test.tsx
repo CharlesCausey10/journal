@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, cleanup } from '@testing-library/react';
-import type { Block, LayoutSettings } from '../main/database';
+import type { Block, LayoutSettings } from '../shared/journal';
 import App from '../renderer/App';
 import { quoteForDate } from '../renderer/dailyQuotes';
 
@@ -35,6 +35,7 @@ const layoutSettings: LayoutSettings = {
   centerSizes: {},
   fontFamily: 'handlee',
   colorScheme: 'paper',
+  moveCheckedToBottom: false,
 };
 
 const resizeObserver = {
@@ -52,12 +53,13 @@ describe('Journal app', () => {
       configurable: true,
       value: jest.fn().mockImplementation(() => resizeObserver),
     });
-    Object.defineProperty(window, 'electron', {
+    Object.defineProperty(window, 'journal', {
       configurable: true,
       value: {
         blocks: { list: jest.fn().mockResolvedValue(blocks) },
         entries: { listForDate: jest.fn().mockResolvedValue([]) },
         layout: { get: jest.fn().mockResolvedValue(layoutSettings) },
+        settings: { setMoveCheckedToBottom: jest.fn().mockResolvedValue(undefined) },
       },
     });
   });
@@ -74,7 +76,7 @@ describe('Journal app', () => {
     await act(async () => { jest.advanceTimersByTime(1000); });
 
     expect(screen.getByLabelText('Journal date')).toHaveValue('2026-10-23');
-    expect(window.electron.entries.listForDate).toHaveBeenLastCalledWith('2026-10-23');
+    expect(window.journal.entries.listForDate).toHaveBeenLastCalledWith('2026-10-23');
     expect(quoteForDate).toHaveBeenLastCalledWith('2026-10-23');
     expect(screen.getByLabelText('Next day')).toBeDisabled();
     unmount();
@@ -92,7 +94,7 @@ describe('Journal app', () => {
     });
 
     expect(screen.getByLabelText('Journal date')).toHaveValue('2026-10-25');
-    expect(window.electron.entries.listForDate).toHaveBeenLastCalledWith('2026-10-25');
+    expect(window.journal.entries.listForDate).toHaveBeenLastCalledWith('2026-10-25');
   });
 
   it('keeps a deliberately selected historical date while updating Today', async () => {
@@ -116,5 +118,20 @@ describe('Journal app', () => {
 
     unmount();
     expect(resizeObserver.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the checklist setting and keeps the previous value if saving fails', async () => {
+    render(<App />);
+    await screen.findByText('Morning notes');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const checkbox = screen.getByRole('checkbox', { name: 'Move checked items to the bottom of the checklist' });
+    expect(checkbox).not.toBeChecked();
+    await act(async () => { fireEvent.click(checkbox); });
+    expect(window.journal.settings.setMoveCheckedToBottom).toHaveBeenCalledWith(true);
+    expect(checkbox).toBeChecked();
+    jest.mocked(window.journal.settings.setMoveCheckedToBottom).mockRejectedValueOnce(new Error('Save failed'));
+    await act(async () => { fireEvent.click(checkbox); });
+    expect(checkbox).toBeChecked();
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not save the checklist setting.');
   });
 });

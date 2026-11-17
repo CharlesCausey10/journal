@@ -19,12 +19,14 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { CheckListPlugin } from '@lexical/react/LexicalCheckListPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import type { JSX } from 'react';
+import { registerMoveCheckedToBottom } from './checklistOrder';
 
 export interface MarkdownEditorProps {
   value: string;
   label: string;
   fontSizePx: number;
   readOnly: boolean;
+  moveCheckedToBottom?: boolean;
   onChange?: (markdown: string) => void;
   placeholder?: string;
 }
@@ -65,11 +67,18 @@ function MarkdownChangePlugin({
   return null;
 }
 
+function ChecklistOrderPlugin({ enabled }: { enabled: boolean }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => enabled ? registerMoveCheckedToBottom(editor) : undefined, [editor, enabled]);
+  return null;
+}
+
 export default function MarkdownEditor({
   value,
   label,
   fontSizePx,
   readOnly,
+  moveCheckedToBottom = false,
   onChange,
   placeholder,
 }: MarkdownEditorProps): JSX.Element {
@@ -123,6 +132,7 @@ export default function MarkdownEditor({
             <HistoryPlugin />
             <ListPlugin />
             <CheckListPlugin disableTakeFocusOnClick />
+            <ChecklistOrderPlugin enabled={moveCheckedToBottom} />
             <MarkdownShortcutPlugin transformers={journalTransformers} />
             <MarkdownChangePlugin onChange={onChange ?? (() => {})} />
           </>

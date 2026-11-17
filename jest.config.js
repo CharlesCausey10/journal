@@ -4,7 +4,7 @@ const toolingRequire = createRequire(
 );
 
 module.exports = {
-  modulePathIgnorePatterns: ['<rootDir>/release/app/package.json'],
+  roots: ['<rootDir>/src'],
   moduleDirectories: ['node_modules', 'release/app/node_modules', 'src'],
   moduleFileExtensions: ['js', 'jsx', 'ts', 'tsx', 'json'],
   moduleNameMapper: {
@@ -13,12 +13,12 @@ module.exports = {
       '<rootDir>/.erb/mocks/fileMock.js',
     '\\.(css|less|sass|scss)$': 'identity-obj-proxy',
   },
-  setupFiles: ['./.erb/scripts/check-build-exists.ts'],
+  setupFiles: ['./scripts/test-setup.cjs'],
   testEnvironment: 'jsdom',
   testEnvironmentOptions: {
     url: 'http://localhost/',
   },
-  testPathIgnorePatterns: ['release/app/dist', '.erb/dll'],
+
   // Exercise the real editor and its ESM dependencies in renderer tests.
   transformIgnorePatterns: ['node_modules/(?!(@lexical|lexical|@preact)/)'],
   transform: {

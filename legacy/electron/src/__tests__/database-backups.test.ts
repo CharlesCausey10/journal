@@ -74,9 +74,9 @@ afterEach(() => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test('a clean installation initializes version 3 without migration backups', async () => {
+test('a clean installation initializes version 4 without migration backups', async () => {
   const connection = await open();
-  expect(connection.pragma('user_version', { simple: true })).toBe(3);
+  expect(connection.pragma('user_version', { simple: true })).toBe(4);
   expect(connection.prepare('SELECT count(*) AS n FROM blocks').get()).toEqual({
     n: 2,
   });
@@ -88,8 +88,8 @@ test('version 2 adds the query index with verified backups and preserves entries
   original.exec('DROP INDEX entries_block_date_updated; PRAGMA user_version = 2');
   original.close();
   const connection = await open();
-  expect(connection.pragma('user_version', { simple: true })).toBe(3);
-  expect(manifest(sets()[0])).toMatchObject({ fromSchema: 2, toSchema: 3, status: 'complete' });
+  expect(connection.pragma('user_version', { simple: true })).toBe(4);
+  expect(manifest(sets()[0])).toMatchObject({ fromSchema: 2, toSchema: 4, status: 'complete' });
   expect(contents()).toHaveLength(1);
   const plans = connection.prepare(
     'EXPLAIN QUERY PLAN SELECT * FROM entries WHERE block_id = ? AND entry_date = ? ORDER BY updated_at DESC LIMIT 1',
@@ -106,6 +106,21 @@ test('routine startup uses one quick check without exhaustive integrity scans', 
   expect(checks.filter((statement) => statement === 'quick_check')).toHaveLength(1);
   expect(checks).not.toContain('integrity_check');
   expect(checks).not.toContain('foreign_key_check');
+});
+
+test('version 3 adds the checklist preference without changing journal content or settings', async () => {
+  const original = seed();
+  original.exec(`ALTER TABLE user_settings DROP COLUMN move_checked_to_bottom;
+    UPDATE user_settings SET font_family = 'georgia', color_scheme = 'sage';
+    PRAGMA user_version = 3`);
+  const expected = contents();
+  original.close();
+  const connection = await open();
+  expect(connection.pragma('user_version', { simple: true })).toBe(4);
+  expect(connection.prepare('SELECT font_family, color_scheme, move_checked_to_bottom FROM user_settings').get())
+    .toEqual({ font_family: 'georgia', color_scheme: 'sage', move_checked_to_bottom: 0 });
+  expect(contents()).toEqual(expected);
+  expect(manifest(sets()[0])).toMatchObject({ fromSchema: 3, toSchema: 4, status: 'complete' });
 });
 
 test.each([false, true])(
@@ -125,14 +140,14 @@ test.each([false, true])(
     );
     const connection = await open();
     original.close();
-    expect(connection.pragma('user_version', { simple: true })).toBe(3);
+    expect(connection.pragma('user_version', { simple: true })).toBe(4);
     const [folder] = sets();
     expect(manifest(folder)).toMatchObject({
       status: 'complete',
       beforeVerified: true,
       afterVerified: true,
       fromSchema: 1,
-      toSchema: 3,
+      toSchema: 4,
     });
     expect(contents(path.join(folder, 'before.sqlite'))).toEqual(expected);
     expect(contents(path.join(folder, 'after.sqlite'))).toEqual(expected);

@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '../renderer/App';
-import type { Block } from '../main/database';
+import type { Block } from '../shared/journal';
 
 jest.mock('../renderer/dailyQuotes', () => ({
   quoteForDate: jest.fn().mockResolvedValue({ text: 'Quote', author: 'Author' }),
@@ -21,7 +21,7 @@ beforeEach(() => {
     configurable: true,
     value: jest.fn(() => ({ observe() {}, disconnect() {} })),
   });
-  Object.defineProperty(window, 'electron', {
+  Object.defineProperty(window, 'journal', {
     configurable: true,
     value: {
       blocks: { list: jest.fn().mockResolvedValue(blocks) },

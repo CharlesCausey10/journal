@@ -1,50 +1,46 @@
-A daily journal for personal use and development experience
+# Journal
 
-## Local data
+Journal is an offline desktop journal built with Tauri, React, Lexical and SQLite.
 
-The installed app keeps its existing personal database in Electron's default
-`userData` directory. Development runs (`npm start`) use a separate
-`Journal Development` directory under Electron's `appData` directory instead.
-On Windows, the development database is
-`%APPDATA%\Journal Development\journal.sqlite`.
+## Run or build
 
-The development database is created on its first run with the default blocks.
-Existing personal data is not moved or copied. Development window settings and
-browser session data are also kept in the separate development directory.
+Install Node.js 24+, Rust stable, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system. On this Windows checkout the build scripts also recognize the Rust toolchain installed for the prototype.
 
-## Migration backups and recovery
+```sh
+npm ci
+npm start
+```
 
-Journal upgrades existing version 1 databases to schema version 2 on startup.
-Before changing an existing database it creates and verifies a SQLite snapshot;
-it then migrates in a transaction, checks that entries, blocks, and settings were
-preserved, and creates a verified snapshot of the result before enabling editing.
-New, empty databases are initialized directly. Unsupported or damaged databases
-are never automatically reset.
+Development uses a separate journal. Run `npm run build` to build the full application executable or `npm run package` to build installers for the current operating system. By default, Cargo writes the executable under `src-tauri/target/release` and installers under its `bundle` directory. Windows uses WebView2. The installer downloads its bootstrapper if required.
 
-Backups live under `<userData>/backups/migrations/<timestamp-and-id>/` alongside
-the personal database, outside the application installation directory. Each
-successful set includes `before.sqlite`, `after.sqlite`, a `manifest.json` with
-app/schema versions and verification status, and `window-state.json` if present.
-Journal keeps the latest five verified successful pairs. Failed and interrupted
-attempts are retained. These local snapshots are not encrypted and do not protect
-against disk failure; copy important backups to another drive as well.
+## Moving from Electron
 
-If startup or migration fails, a recovery dialog offers **Quit**, **Open backup
-folder**, **Retry**, and **Restore backup**. Retry requires an explicit user action.
-If migration committed but the after-backup failed, Retry verifies preservation
-and finishes that snapshot before enabling editing. Restore validates that the
-selected database can be used by this release and preserves the current database
-and SQLite sidecar files under `<userData>/backups/recovery/` before replacing it.
-An interrupted restore requires selecting a backup again; it cannot silently
-initialize an empty journal. Restoring changes the database (including journal
-settings); window placement remains unchanged.
+Quit Electron Journal, then launch the Tauri release. On its first launch it looks in the old Journal app-data folder and copies a consistent SQLite snapshot, including committed changes in the write-ahead log. Your entries, templates, layout and settings move together. From then on, each version saves to its own database. The standalone prototype uses a third, independent database.
 
-Do not open the upgraded database with older Journal releases that contain the
-previous schema-reset behavior. To return to one of those releases, quit Journal
-and use its compatible `before.sqlite` snapshot, preserving the current database
-first. Newer safeguarded releases refuse unsupported schema versions.
+The new personal database is `%APPDATA%\com.charlescausey.journal\journal.sqlite` on Windows and `~/Library/Application Support/com.charlescausey.journal/journal.sqlite` on macOS. The Electron database and its backup history remain in the original `journal` folder. The old app can still open that copy. Close both apps before making filesystem copies of a live database.
 
-Migration tests use disposable temporary databases, never your personal data.
-The publish workflow runs TypeScript checks and application/migration tests before
-publishing installers. Packaged installer upgrade testing is still a separate
-release check.
+Journal checks older schema versions 1–3 and upgrades them to version 4. It saves verified before/after snapshots under `backups/tauri` and compares existing entries, blocks and settings before committing the migration. When startup fails, the recovery screen lets you retry, locate the data folder, or select a SQLite backup. Restore verifies the selected database and archives the displaced database and its SQLite sidecars under `backups/recovery`.
+
+## Verify
+
+```sh
+npm exec tsc -- --noEmit
+npm run lint
+npm test -- --runInBand
+npm run build:web
+npm run test:native
+```
+
+On Windows, run `npm run test:smoke` after a release build. It starts the packaged app with a fresh temporary journal, types in the Notes editor, closes the window, and checks the text and checklist preference after reopening.
+
+## Releases
+
+The desktop CI workflow builds on Windows, macOS and Linux. The release workflow prepares a draft on version tags. It builds a Windows x64 installer, a universal macOS DMG for Intel and Apple Silicon, and a Linux AppImage. Configure the repository variable `JOURNAL_UPDATER_PUBLIC_KEY` and the matching secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` before tagging. For signed and notarized macOS distribution, configure the Apple certificate and notarization secrets referenced in the workflow.
+
+Signed release builds check for updates and offer installation when closing after saving. Local builds omit the update key. Install the first Tauri release manually when switching from Electron.
+
+## Tauri beta rollback
+
+The Windows 1.2.0-beta.1 pre-release includes an Electron export in Settings and a separate rollback ZIP. Its Restore-Electron.ps1 tool closes the data-format gap between Tauri schema 4 and published Electron 1.1.3 schema 3. Close both apps, run the tool, confirm the replacement, then install Electron 1.1.3. The tool keeps a recovery copy of the displaced Electron database. The export preserves entries, panels, templates and shared preferences. The checklist-order preference is available in Tauri.
+
+Writing independently in both apps requires choosing which journal to retain or arranging a separate merge. The restore tool replaces the Electron database with the Tauri snapshot.

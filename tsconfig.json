@@ -3,7 +3,10 @@
     "incremental": true,
     "target": "es2022",
     "module": "nodenext",
-    "lib": ["dom", "es2022"],
+    "lib": [
+      "dom",
+      "es2022"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "sourceMap": true,
@@ -14,7 +17,10 @@
     "allowJs": true,
     "outDir": ".erb/dll",
     "rootDir": ".",
-    "types": ["node", "jest"]
+    "types": [
+      "node",
+      "jest"
+    ]
   },
   "exclude": [
     "test",
@@ -25,12 +31,11 @@
     ".erb/tooling/node_modules"
   ],
   "include": [
-    "src",
-    ".erb/configs",
-    ".erb/scripts",
-    "eslint.config.js",
-    "jest.config.js",
-    "assets",
-    "electron.vite.config.ts"
+    "src/renderer",
+    "src/shared",
+    "src/__tests__/App.test.tsx",
+    "src/__tests__/journal-tabs.test.tsx",
+    "src/__tests__/checklist-order.test.ts",
+    "assets"
   ]
 }

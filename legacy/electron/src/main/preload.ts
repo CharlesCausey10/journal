@@ -87,6 +87,9 @@ const electronHandler = {
     },
   },
   settings: {
+    setMoveCheckedToBottom(enabled: boolean): Promise<void> {
+      return ipcRenderer.invoke('settings:set-move-checked-to-bottom', enabled);
+    },
     setFontFamily(fontFamily: FontFamily): Promise<void> {
       return ipcRenderer.invoke('settings:set-font-family', fontFamily);
     },

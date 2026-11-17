@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const currentVersion = 3;
+const currentVersion = 4;
 type Connection = Database.Database;
 type Manifest = {
   id: string;
@@ -232,7 +232,7 @@ export async function openProtectedDatabase(options: {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
         )
         .all().length;
-    if (!empty && ![1, 2, currentVersion].includes(version)) {
+    if (!empty && ![1, 2, 3, currentVersion].includes(version)) {
       throw new Error(
         'This database version is unsupported. Please use a compatible Journal release.',
       );
@@ -380,7 +380,7 @@ export async function restoreDatabase(
   const candidate = new Database(staged);
   try {
     const selectedVersion = candidate.pragma('user_version', { simple: true });
-    if (![1, 2, currentVersion].includes(selectedVersion as number)) {
+    if (![1, 2, 3, currentVersion].includes(selectedVersion as number)) {
       throw new Error(
         'The selected file is not a supported Journal backup; its schema version is not supported.',
       );

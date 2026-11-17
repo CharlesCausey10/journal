@@ -32,6 +32,7 @@ import {
   updateCenterOrientation,
   removeBlock,
   setFontFamily,
+  setMoveCheckedToBottom,
   setColorScheme,
   updateBlockSettings,
   saveEntry,
@@ -253,6 +254,10 @@ handle('layout:set-center-orientation', (_event, value: unknown) => {
     throw new TypeError('Invalid center orientation');
   }
   updateCenterOrientation(value);
+});
+handle('settings:set-move-checked-to-bottom', (_event, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new TypeError('Invalid checklist setting');
+  setMoveCheckedToBottom(enabled);
 });
 handle('settings:set-font-family', (_event, fontFamily: unknown) => {
   if (

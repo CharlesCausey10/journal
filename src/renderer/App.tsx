@@ -16,10 +16,11 @@ import type {
   FontFamily,
   LayoutSettings,
   ResetFrequency,
-} from '../main/database';
+} from '../shared/journal';
 import { quoteForDate } from './dailyQuotes';
 import type { DailyQuote } from './dailyQuotes';
 import './App.css';
+import { flushJournal } from './desktop';
 import {
   CENTER_MIN_HEIGHT_PX,
   CENTER_MIN_WIDTH_PX,
@@ -88,10 +89,11 @@ interface BlockEditorProps {
   entry?: Entry;
   entryDate: string;
   readOnly: boolean;
+  moveCheckedToBottom: boolean;
   onSaved: (entry: Entry, requestedDate: string) => void;
 }
 
-function BlockEditor({ block, entry, entryDate, readOnly, onSaved }: BlockEditorProps) {
+function BlockEditor({ block, entry, entryDate, readOnly, moveCheckedToBottom, onSaved }: BlockEditorProps) {
   const [content, setContent] = useState(
     entry?.content ?? (block.previousEntryBlockId === null ? block.templateContent : ''),
   );
@@ -114,7 +116,8 @@ function BlockEditor({ block, entry, entryDate, readOnly, onSaved }: BlockEditor
       setSaving(true);
       setSaveError(false);
     }
-    void window.electron.entries
+    entryId.current ??= crypto.randomUUID();
+    void window.journal.entries
       .save({
         ...(entryId.current ? { id: entryId.current } : {}),
         blockId: block.id,
@@ -163,15 +166,22 @@ function BlockEditor({ block, entry, entryDate, readOnly, onSaved }: BlockEditor
     };
   }, [block.id, block.templateContent, content, entryDate, readOnly]);
 
-  useEffect(() => () => {
-    mounted.current = false;
-    if (pendingContent.current !== null) {
+  useEffect(() => {
+    const flush = () => {
+      if (pendingContent.current === null) return;
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
-      const contentToSave = pendingContent.current;
+      const value = pendingContent.current;
       pendingContent.current = null;
-      saveContentRef.current(contentToSave);
-    }
+      saveContentRef.current(value);
+    };
+    mounted.current = true;
+    window.addEventListener('journal-flush', flush);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener('journal-flush', flush);
+      flush();
+    };
   }, []);
 
   return (
@@ -190,6 +200,7 @@ function BlockEditor({ block, entry, entryDate, readOnly, onSaved }: BlockEditor
           label={block.label}
           fontSizePx={block.fontSizePx}
           readOnly={readOnly}
+          moveCheckedToBottom={moveCheckedToBottom}
           onChange={readOnly ? undefined : setContent}
         />
       </Suspense>
@@ -226,12 +237,14 @@ function PastNote({
 function TemplatePane({
   block,
   linkedSourceLabel,
+  moveCheckedToBottom,
   onSave,
   onDragStart,
   onOpenSettings,
 }: {
   block: Block;
   linkedSourceLabel?: string;
+  moveCheckedToBottom: boolean;
   onSave: (content: string) => void;
   onDragStart: (event: ReactDragEvent<HTMLSpanElement>) => void;
   onOpenSettings: (blockId: number) => void;
@@ -244,11 +257,18 @@ function TemplatePane({
     contentRef.current = content;
     saveRef.current = onSave;
   }, [content, onSave]);
-  useEffect(() => () => {
-    if (timer.current !== null) {
+  useEffect(() => {
+    const flush = () => {
+      if (timer.current === null) return;
       window.clearTimeout(timer.current);
+      timer.current = null;
       saveRef.current(contentRef.current);
-    }
+    };
+    window.addEventListener('journal-flush', flush);
+    return () => {
+      window.removeEventListener('journal-flush', flush);
+      flush();
+    };
   }, []);
   const changeContent = (value: string) => {
     contentRef.current = value;
@@ -279,6 +299,7 @@ function TemplatePane({
               label={`${block.label} template`}
               fontSizePx={block.fontSizePx}
               readOnly={false}
+              moveCheckedToBottom={moveCheckedToBottom}
               placeholder="Default content..."
               onChange={changeContent}
             />
@@ -417,6 +438,23 @@ function ResizeHandle({ axis, className, onResize }: ResizeHandleProps) {
 }
 
 function Home() {
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+  const exportForElectron = async () => {
+    setExporting(true);
+    setExportMessage('');
+    try {
+      await flushJournal();
+      const path = await window.__TAURI__.core.invoke<string | null>('journal_request', {
+        action: 'export:electron', input: null,
+      });
+      if (path) setExportMessage(`Saved your journal for Electron to ${path}`);
+    } catch (error) {
+      setExportMessage(`Could not export your journal. ${String(error)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [entriesByBlock, setEntriesByBlock] = useState<Map<number, Entry>>(
     () => new Map(),
@@ -428,6 +466,7 @@ function Home() {
     centerSizes: {},
     fontFamily: 'handlee',
     colorScheme: 'paper',
+    moveCheckedToBottom: false,
   });
   const [activeBlocks, setActiveBlocks] = useState<
     Record<TabPlacement, number | null>
@@ -443,7 +482,8 @@ function Home() {
   const [addMenuPlacement, setAddMenuPlacement] = useState<BlockPlacement | null>(null);
   const [panelError, setPanelError] = useState('');
   const [settingsError, setSettingsError] = useState('');
-  const sizeSaveTimers = useRef(new Map<string, number>());
+  const [savingChecklistSetting, setSavingChecklistSetting] = useState(false);
+  const sizeSaveTimers = useRef(new Map<string, { timer: number; save: () => void }>());
   const [entryDate, setEntryDate] = useState(today);
   const [todayDate, setTodayDate] = useState(today);
   const [dailyQuote, setDailyQuote] = useState<DailyQuote | null>(null);
@@ -518,12 +558,14 @@ function Home() {
     if (nextDateString <= todayDate) setEntryDate(nextDateString);
   };
 
-  useEffect(
-    () => () => {
-      sizeSaveTimers.current.forEach((timer) => window.clearTimeout(timer));
-    },
-    [],
-  );
+  useEffect(() => {
+    const flush = () => sizeSaveTimers.current.forEach(({ timer, save }) => {
+      window.clearTimeout(timer);
+      save();
+    });
+    window.addEventListener('journal-flush', flush);
+    return () => { window.removeEventListener('journal-flush', flush); flush(); };
+  }, []);
 
   useEffect(() => {
     let isCurrent = true;
@@ -531,9 +573,9 @@ function Home() {
     async function loadLayout() {
       try {
         const [savedBlocks, savedEntries, savedSettings] = await Promise.all([
-          window.electron.blocks.list(),
-          window.electron.entries.listForDate(entryDate),
-          window.electron.layout.get(),
+          window.journal.blocks.list(),
+          window.journal.entries.listForDate(entryDate),
+          window.journal.layout.get(),
           loadMarkdownEditor(),
         ]);
         if (!isCurrent) return;
@@ -661,14 +703,14 @@ function Home() {
 
     const timerKey = `${placement}:${blockId ?? ''}`;
     const previousTimer = sizeSaveTimers.current.get(timerKey);
-    if (previousTimer) window.clearTimeout(previousTimer);
-    const timer = window.setTimeout(() => {
-      void window.electron.layout
+    if (previousTimer) window.clearTimeout(previousTimer.timer);
+    const save = () => {
+      void window.journal.layout
         .setSize(placement, sizeValue, blockId)
         .catch(() => setLayoutError(true));
       sizeSaveTimers.current.delete(timerKey);
-    }, 250);
-    sizeSaveTimers.current.set(timerKey, timer);
+    };
+    sizeSaveTimers.current.set(timerKey, { timer: window.setTimeout(save, 250), save });
   };
 
   const updateSize = (placement: BlockPlacement, delta: number, blockId?: number) => {
@@ -700,7 +742,7 @@ function Home() {
   const changeOrientation = (centerOrientation: 'horizontal' | 'vertical' | 'grid') => {
     setSettings((previous) => ({ ...previous, centerOrientation }));
     setLayoutError(false);
-    void window.electron.layout
+    void window.journal.layout
       .setCenterOrientation(centerOrientation)
       .catch(() => setLayoutError(true));
   };
@@ -712,7 +754,7 @@ function Home() {
   const addPanel = async (label: string, placement: BlockPlacement) => {
     try {
       setPanelError('');
-      const block = await window.electron.blocks.add(label, placement);
+      const block = await window.journal.blocks.add(label, placement);
       setBlocks((previous) => [...previous, block]);
       if (block.placement !== 'center') {
         setActiveBlocks((previous) => ({
@@ -734,7 +776,7 @@ function Home() {
   const removePanel = async (block: Block) => {
     try {
       setPanelError('');
-      const removed = await window.electron.blocks.remove(block.id);
+      const removed = await window.journal.blocks.remove(block.id);
       if (!removed) throw new Error('Panel was not found');
       setBlocks((previous) => previous.filter((item) => item.id !== block.id));
       if (selectedPanelSettingsId === block.id) setSelectedPanelSettingsId(null);
@@ -776,7 +818,7 @@ function Home() {
   ) => {
     try {
       setPanelError('');
-      const updatedBlock = await window.electron.blocks.updateSettings(
+      const updatedBlock = await window.journal.blocks.updateSettings(
         blockId,
         update,
         entryDate < today() ? today() : entryDate,
@@ -791,7 +833,7 @@ function Home() {
         update.previousEntryBlockId !== undefined ||
         update.templateContent !== undefined
       ) {
-        const entries = await window.electron.entries.listForDate(entryDate);
+        const entries = await window.journal.entries.listForDate(entryDate);
         setEntriesByBlock(
           new Map(entries.map((entry) => [entry.blockId, entry])),
         );
@@ -802,11 +844,24 @@ function Home() {
     }
   };
 
+  const changeMoveCheckedToBottom = async (enabled: boolean) => {
+    setSettingsError('');
+    setSavingChecklistSetting(true);
+    try {
+      await window.journal.settings.setMoveCheckedToBottom(enabled);
+      setSettings((previous) => ({ ...previous, moveCheckedToBottom: enabled }));
+    } catch {
+      setSettingsError('Could not save the checklist setting.');
+    } finally {
+      setSavingChecklistSetting(false);
+    }
+  };
+
   const changeFontFamily = async (fontFamily: FontFamily) => {
     setSettingsError('');
     setSettings((previous) => ({ ...previous, fontFamily }));
     try {
-      await window.electron.settings.setFontFamily(fontFamily);
+      await window.journal.settings.setFontFamily(fontFamily);
     } catch {
       setSettingsError('Could not save the font setting.');
     }
@@ -816,7 +871,7 @@ function Home() {
     setSettingsError('');
     setSettings((previous) => ({ ...previous, colorScheme }));
     try {
-      await window.electron.settings.setColorScheme(colorScheme);
+      await window.journal.settings.setColorScheme(colorScheme);
     } catch {
       setSettingsError('Could not save the color scheme.');
     }
@@ -837,7 +892,7 @@ function Home() {
   ) => {
     try {
       setPanelError('');
-      const updatedBlocks = await window.electron.blocks.move(
+      const updatedBlocks = await window.journal.blocks.move(
         blockId,
         placement,
         position,
@@ -953,6 +1008,7 @@ function Home() {
           <TemplatePane
             key={`template-${active.id}`}
             block={active}
+            moveCheckedToBottom={settings.moveCheckedToBottom}
             linkedSourceLabel={blocks.find((block) => block.id === active.previousEntryBlockId)?.label}
             onSave={(templateContent) => void updatePanelSettings(active.id, { templateContent })}
             onOpenSettings={() => openPanelSettings(active)}
@@ -972,6 +1028,7 @@ function Home() {
             entry={activeEntry}
             entryDate={entryDate}
             readOnly={active.previousEntryBlockId !== null}
+            moveCheckedToBottom={settings.moveCheckedToBottom}
             onSaved={handleEntrySaved}
           />
         ) : null}
@@ -1049,6 +1106,7 @@ function Home() {
                   {editingLayout ? (
                     <TemplatePane
                       block={block}
+                      moveCheckedToBottom={settings.moveCheckedToBottom}
                       linkedSourceLabel={blocks.find((source) => source.id === block.previousEntryBlockId)?.label}
                       onSave={(templateContent) => void updatePanelSettings(block.id, { templateContent })}
                       onOpenSettings={() => openPanelSettings(block)}
@@ -1071,6 +1129,7 @@ function Home() {
                       entry={entriesByBlock.get(block.id)}
                       entryDate={entryDate}
                       readOnly={block.previousEntryBlockId !== null}
+                      moveCheckedToBottom={settings.moveCheckedToBottom}
                       onSaved={handleEntrySaved}
                     />
                   )}
@@ -1121,7 +1180,21 @@ function Home() {
                       ))}
                     </div>
                   </fieldset>
+                  <label className="checklist-setting">
+                    <input
+                      type="checkbox"
+                      checked={settings.moveCheckedToBottom}
+                      disabled={savingChecklistSetting}
+                      onChange={(event) => void changeMoveCheckedToBottom(event.target.checked)}
+                    />
+                    Move checked items to the bottom of the checklist
+                  </label>
                   {settingsError && <p className="dialog-error" role="alert">{settingsError}</p>}
+                  <button type="button" disabled={exporting} onClick={() => void exportForElectron()}>
+                    {exporting ? 'Exporting…' : 'Export journal for Electron'}
+                  </button>
+                  <p className="dialog-help">Save your latest writing and settings in a format the previous Electron app can open.</p>
+                  {exportMessage && <p role="status">{exportMessage}</p>}
                 </div>
               </section>
             </div>

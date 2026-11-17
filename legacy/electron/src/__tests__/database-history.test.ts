@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { app } from 'electron';
-import { closeDatabase, deleteEntry, getEntry, initializeDatabase, saveEntry } from '../main/database';
+import { closeDatabase, deleteEntry, getEntry, getLayoutSettings, initializeDatabase, saveEntry, setMoveCheckedToBottom } from '../main/database';
 
 jest.mock('electron', () => ({ app: { getPath: jest.fn(), getVersion: () => 'test' } }));
 let directory: string;
@@ -25,6 +25,17 @@ afterEach(() => {
 function seed(date: string) {
   connection.prepare('INSERT INTO entries VALUES (?, 1, ?, ?, ?, ?)').run('existing', date, 'original', 'created', 'updated');
 }
+
+test('checklist preference defaults off and persists after restarting', async () => {
+  expect(getLayoutSettings().moveCheckedToBottom).toBe(false);
+  setMoveCheckedToBottom(true);
+  closeDatabase();
+  await initializeDatabase();
+  expect(getLayoutSettings().moveCheckedToBottom).toBe(true);
+  setMoveCheckedToBottom(false);
+  expect(getLayoutSettings().moveCheckedToBottom).toBe(false);
+  expect(() => setMoveCheckedToBottom('true' as unknown as boolean)).toThrow('Invalid checklist setting');
+});
 test('cannot rewrite history by supplying today or another block', () => {
   seed('2026-10-19');
   expect(() => saveEntry({ id: 'existing', blockId: 1, entryDate: '2026-10-20', content: 'changed' })).toThrow();

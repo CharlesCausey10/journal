@@ -1,0 +1,209 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use std::{path::PathBuf, sync::Mutex};
+use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
+mod journal;
+mod storage;
+struct Store {
+    directory: PathBuf,
+    legacy: Option<PathBuf>,
+    db: Mutex<Option<rusqlite::Connection>>,
+}
+
+#[tauri::command]
+async fn journal_request(
+    action: String,
+    input: serde_json::Value,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<_> {
+        let store = app.state::<Store>();
+        let mut db = store
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        if action == "recovery:folder" {
+            let folder = if store.directory.join("backups").exists() {
+                store.directory.clone()
+            } else {
+                store
+                    .legacy
+                    .clone()
+                    .unwrap_or_else(|| store.directory.clone())
+            };
+            app.opener()
+                .open_path(folder.to_string_lossy(), None::<&str>)?;
+            return Ok(serde_json::Value::Null);
+        }
+        if action == "recovery:restore" {
+            anyhow::ensure!(
+                db.is_none(),
+                "Recovery is only available before the journal opens"
+            );
+            if let Some(file) = app
+                .dialog()
+                .file()
+                .add_filter("SQLite backup", &["sqlite", "db"])
+                .blocking_pick_file()
+            {
+                let path = file.into_path()?;
+                if app
+                    .dialog()
+                    .message(format!(
+                        "Restore {}? Your current database will be kept in the recovery folder.",
+                        path.display()
+                    ))
+                    .buttons(MessageDialogButtons::OkCancel)
+                    .blocking_show()
+                {
+                    storage::restore(&store.directory, &path)?;
+                    return Ok(serde_json::json!(true));
+                }
+            }
+            return Ok(serde_json::json!(false));
+        }
+        if db.is_none() {
+            *db = Some(storage::open(&store.directory, store.legacy.as_deref())?);
+        }
+        if action == "export:electron" {
+            let selected = app
+                .dialog()
+                .file()
+                .set_file_name("Journal-for-Electron.sqlite")
+                .add_filter("Journal database", &["sqlite"])
+                .blocking_save_file();
+            if let Some(file) = selected {
+                let path = file.into_path()?;
+                storage::export_for_electron(db.as_ref().unwrap(), &path)?;
+                return Ok(serde_json::json!(path));
+            }
+            return Ok(serde_json::Value::Null);
+        }
+        journal::request(db.as_mut().unwrap(), &action, &input)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    if option_env!("JOURNAL_UPDATER_PUBLIC_KEY").is_none() {
+        return Ok(None);
+    }
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    Ok(updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|u| u.version))
+}
+
+#[tauri::command]
+async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
+    if option_env!("JOURNAL_UPDATER_PUBLIC_KEY").is_none() {
+        return Err("This build uses manual updates".into());
+    }
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
+        update
+            .download_and_install(|_, _| {}, || {})
+            .await
+            .map_err(|e| e.to_string())?;
+        app.restart();
+    }
+    Ok(())
+}
+
+fn main() {
+    // A recovery export can run even if the webview cannot start.
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--export-electron")
+    {
+        let result = if arguments.len() == 3 {
+            storage::export_file_for_electron(
+                std::path::Path::new(&arguments[1]),
+                std::path::Path::new(&arguments[2]),
+            )
+        } else {
+            Err(anyhow::anyhow!(
+                "Usage: Journal --export-electron SOURCE DESTINATION"
+            ))
+        };
+        if let Err(error) = result {
+            eprintln!("{error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            if std::env::var_os("JOURNAL_SMOKE_TEST_DATA").is_none() {
+                app.handle()
+                    .plugin(tauri_plugin_window_state::Builder::default().build())?;
+                if let Some(key) = option_env!("JOURNAL_UPDATER_PUBLIC_KEY") {
+                    app.handle()
+                        .plugin(tauri_plugin_updater::Builder::new().pubkey(key).build())?;
+                }
+            }
+            let (directory, legacy) = match std::env::var_os("JOURNAL_SMOKE_TEST_DATA") {
+                Some(path) => (PathBuf::from(path), None),
+                None if cfg!(debug_assertions) => (app.path().app_data_dir()?, None),
+                None => {
+                    let root = app.path().config_dir()?;
+                    let legacy = ["journal", "Journal"]
+                        .into_iter()
+                        .map(|n| root.join(n))
+                        .find(|p| p.join("journal.sqlite").exists() || p.join("backups").exists());
+                    (app.path().app_data_dir()?, legacy)
+                }
+            };
+            let config = &app.config().app.windows[0];
+            let handle = app.handle().clone();
+            let window = tauri::WebviewWindowBuilder::from_config(app, config)?
+                .on_navigation(|url| {
+                    matches!(
+                        (url.scheme(), url.host_str()),
+                        ("tauri", Some("localhost")) | ("http" | "https", Some("tauri.localhost"))
+                    ) || (cfg!(debug_assertions)
+                        && url.origin().ascii_serialization() == "http://127.0.0.1:1420")
+                })
+                .on_new_window(move |url, _| {
+                    if matches!(url.scheme(), "http" | "https" | "mailto") {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                });
+            let window = if std::env::var_os("JOURNAL_SMOKE_TEST_DATA").is_some() {
+                window.data_directory(directory.join("webview"))
+            } else {
+                window
+            };
+            app.manage(Store {
+                directory,
+                legacy,
+                db: Mutex::new(None),
+            });
+            window.build()?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            journal_request,
+            check_update,
+            apply_update
+        ])
+        .run(tauri::generate_context!())
+        .expect("Could not start Journal");
+}

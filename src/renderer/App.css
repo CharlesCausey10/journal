@@ -1447,3 +1447,17 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.settings-content .checklist-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: none;
+  margin-top: 20px;
+}
+
+.checklist-setting input[type='checkbox'] {
+  width: auto;
+  flex: 0 0 auto;
+  accent-color: var(--theme-ink);
+}

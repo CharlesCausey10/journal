@@ -58,6 +58,7 @@ export interface LayoutSettings {
   centerSizes: Record<number, number>;
   fontFamily: FontFamily;
   colorScheme: ColorScheme;
+  moveCheckedToBottom: boolean;
 }
 
 export interface SaveEntryInput {
@@ -75,7 +76,7 @@ const defaultTaskTemplate = [
 
 function hasCurrentSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
-  if (![1, 2, 3].includes(version)) return false;
+  if (![1, 2, 3, 4].includes(version)) return false;
 
   const columnsFor = (table: string) =>
     new Set(
@@ -133,6 +134,26 @@ function hasCurrentSchema(connection: Database.Database) {
 }
 
 export function initializeSchema(connection: Database.Database) {
+  const version = connection.pragma('user_version', { simple: true }) as number;
+  if (version === 4) {
+    const columns = connection.pragma('table_info(user_settings)') as { name: string }[];
+    if (!hasCurrentSchema(connection) || !columns.some((column) => column.name === 'move_checked_to_bottom')) {
+      throw new Error('The database schema is damaged or unsupported.');
+    }
+    return;
+  }
+  connection.transaction(() => {
+    initializeBaseSchema(connection);
+    const columns = connection.pragma('table_info(user_settings)') as { name: string }[];
+    if (!columns.some((column) => column.name === 'move_checked_to_bottom')) {
+      connection.exec(`ALTER TABLE user_settings ADD COLUMN move_checked_to_bottom
+        INTEGER NOT NULL DEFAULT 0 CHECK (move_checked_to_bottom IN (0, 1))`);
+    }
+    connection.pragma('user_version = 4');
+  })();
+}
+
+function initializeBaseSchema(connection: Database.Database) {
   const version = connection.pragma('user_version', { simple: true }) as number;
   const tables = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
   const isEmpty = version === 0 && tables.length === 0;
@@ -352,16 +373,22 @@ export function getLayoutSettings(): LayoutSettings {
               header_size_px AS headerSizePx, footer_size_px AS footerSizePx,
               left_size_px AS leftSizePx, right_size_px AS rightSizePx,
               center_sizes AS centerSizesJson, font_family AS fontFamily,
-              color_scheme AS colorScheme
+              color_scheme AS colorScheme, move_checked_to_bottom AS moveCheckedToBottom
        FROM user_settings WHERE id = 1`,
     )
-    .get() as (Omit<LayoutSettings, 'centerSizes'> & { centerSizesJson: string }) | undefined;
+    .get() as (Omit<LayoutSettings, 'centerSizes' | 'moveCheckedToBottom'> & { centerSizesJson: string; moveCheckedToBottom: number }) | undefined;
   if (!row) throw new Error('User settings are missing');
   const { centerSizesJson, ...settings } = row;
   return {
     ...settings,
+    moveCheckedToBottom: settings.moveCheckedToBottom === 1,
     centerSizes: JSON.parse(centerSizesJson) as Record<number, number>,
   };
+}
+
+export function setMoveCheckedToBottom(enabled: boolean) {
+  if (typeof enabled !== 'boolean') throw new TypeError('Invalid checklist setting');
+  db().prepare('UPDATE user_settings SET move_checked_to_bottom = ? WHERE id = 1').run(Number(enabled));
 }
 
 export function setFontFamily(fontFamily: FontFamily) {

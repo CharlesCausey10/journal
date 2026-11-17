@@ -23,7 +23,7 @@ module.exports = [
       '.erb/dll/**',
       'release/app/dist/**',
       'release/build/**',
-      'coverage/**',
+      'coverage/**', 'output/**', 'dist/**', 'prototypes/**', 'legacy/**', 'src-tauri/**',
       '**/*.css.d.ts',
       '**/*.sass.d.ts',
       '**/*.scss.d.ts',

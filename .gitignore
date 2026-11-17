@@ -20,6 +20,9 @@ node_modules
 
 release/app/dist
 release/build
+output/tauri-toolchain/
+/output/test-temp/
+/output/tauri-prototype/
 .erb/dll
 
 .idea
@@ -27,3 +30,6 @@ npm-debug.log.*
 *.css.d.ts
 *.sass.d.ts
 *.scss.d.ts
+/dist/
+/src-tauri/target/
+/src-tauri/gen/
