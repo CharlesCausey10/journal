@@ -41,7 +41,7 @@ function Write-Manifest {
     $stream = [IO.File]::Open($temporary, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite)
     try { $stream.Flush($true) } finally { $stream.Dispose() }
     if (Test-Path -LiteralPath $manifestPath) {
-        [IO.File]::Replace($temporary, $manifestPath, $null)
+        [IO.File]::Replace($temporary, $manifestPath, (Join-Path $manifestFolder 'manifest.previous.json'))
     } else {
         [IO.File]::Move($temporary, $manifestPath)
     }
@@ -80,3 +80,4 @@ try {
     throw
 }
 Write-Output "Your latest journal is ready in Electron 1.1.3. Recovery copy saved in $archive"
+
