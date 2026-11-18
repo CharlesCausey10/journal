@@ -57,10 +57,13 @@ async function run(reopen) {
         policyHelper,
         '-StateFile',
         policyState,
-        '-BrowserArguments',
-        browserArguments.join(' '),
       ],
-      { timeout: 30000, windowsHide: true, stdio: 'pipe' },
+      {
+        timeout: 30000,
+        windowsHide: true,
+        stdio: 'pipe',
+        env: { ...process.env, JOURNAL_CI_WEBVIEW_ARGUMENTS: browserArguments.join(' ') },
+      },
     );
   }
   const child = spawn(exe, [], {

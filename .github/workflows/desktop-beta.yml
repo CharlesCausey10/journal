@@ -3,7 +3,9 @@ on:
   push:
     tags: ['v*-beta.*']
     branches: [codex/tauri-beta]
-    paths: [.github/workflows/desktop-beta.yml]
+    paths:
+      - .github/workflows/desktop-beta.yml
+      - scripts/windows-ci-webview-policy.ps1
 permissions:
   contents: write
 jobs:
@@ -38,13 +40,15 @@ jobs:
         run: node scripts/smoke-windows.cjs src-tauri/target/release/journal.exe
       - name: Check matching release draft before uploading from branch
         if: github.ref_type != 'tag'
+        id: release-draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          test "$(gh release view "$BETA_TAG" --json isDraft --jq .isDraft)" = true
+          is_draft=$(gh release view "$BETA_TAG" --json isDraft --jq .isDraft)
+          echo "ready=$is_draft" >> "$GITHUB_OUTPUT"
       - name: Attach Windows installer
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && (github.ref_type == 'tag' || steps.release-draft.outputs.ready == 'true')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

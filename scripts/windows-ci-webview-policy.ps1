@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory=$true)][string]$StateFile,
-    [string]$BrowserArguments,
     [switch]$Restore
 )
 $ErrorActionPreference='Stop'
@@ -21,6 +20,7 @@ if ($Restore) {
     }
     return
 }
+$BrowserArguments = $env:JOURNAL_CI_WEBVIEW_ARGUMENTS
 if ([string]::IsNullOrWhiteSpace($BrowserArguments)) { throw 'Browser arguments are required.' }
 $previous=$null
 if (Test-Path -LiteralPath $policy) {
