@@ -1,4 +1,4 @@
-name: Package desktop beta
+name: Retry Windows packaging or build beta
 on:
   push:
     tags: ['v*-beta.*']
@@ -36,6 +36,13 @@ jobs:
       - run: npm run package -- ${{ runner.os == 'macOS' && '--target universal-apple-darwin --bundles app,dmg' || '--bundles nsis' }}
       - if: runner.os == 'Windows'
         run: node scripts/smoke-windows.cjs src-tauri/target/release/journal.exe
+      - name: Check matching release draft before uploading from branch
+        if: github.ref_type != 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$(gh release view "$BETA_TAG" --json isDraft --jq .isDraft)" = true
       - name: Attach Windows installer
         if: runner.os == 'Windows'
         shell: bash

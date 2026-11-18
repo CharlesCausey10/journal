@@ -47,9 +47,10 @@ async function run(reopen) {
   const policyHelper = path.resolve('scripts/windows-ci-webview-policy.ps1');
   if (process.env.GITHUB_ACTIONS === 'true') {
     execFileSync(
-      'powershell.exe',
+      'pwsh.exe',
       [
         '-NoProfile',
+        '-NonInteractive',
         '-ExecutionPolicy',
         'Bypass',
         '-File',
@@ -222,9 +223,10 @@ async function run(reopen) {
     );
     try {
       execFileSync(
-        'powershell.exe',
+        'pwsh.exe',
         [
           '-NoProfile',
+          '-NonInteractive',
           '-ExecutionPolicy',
           'Bypass',
           '-File',
@@ -253,9 +255,10 @@ async function run(reopen) {
     if (child.exitCode === null) child.kill();
     if (process.env.GITHUB_ACTIONS === 'true' && fs.existsSync(policyState)) {
       execFileSync(
-        'powershell.exe',
+        'pwsh.exe',
         [
           '-NoProfile',
+          '-NonInteractive',
           '-ExecutionPolicy',
           'Bypass',
           '-File',
