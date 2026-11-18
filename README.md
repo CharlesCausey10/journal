@@ -38,6 +38,6 @@ On Windows, run `npm run test:smoke` after a release build. It starts the packag
 
 ## Releases
 
-The desktop CI workflow builds on Windows, macOS and Linux. The release workflow prepares a draft on version tags. It builds a Windows x64 installer, a universal macOS DMG for Intel and Apple Silicon, and a Linux AppImage. Configure the repository variable `JOURNAL_UPDATER_PUBLIC_KEY` and the matching secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` before tagging. For signed and notarized macOS distribution, configure the Apple certificate and notarization secrets referenced in the workflow.
+The desktop CI workflow builds on Windows, macOS and Linux. The release workflow prepares a draft on version tags. It builds a Windows x64 installer, a universal macOS DMG for Intel and Apple Silicon, and a Linux AppImage. For automatic update builds, configure the repository variable `JOURNAL_UPDATER_PUBLIC_KEY` and the matching secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` before tagging. For signed and notarized macOS distribution, configure the Apple certificate and notarization secrets referenced in the workflow.
 
-Signed release builds check for updates and offer installation when closing after saving. Local builds omit the update key.
+Signed release builds check for updates and offer installation when closing after saving. Builds without the update key use manual installation. Create a GitHub release draft for the version tag before pushing it so the workflow can attach the installers.

@@ -8,7 +8,7 @@ jobs:
   package:
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: ${{ vars.JOURNAL_UPDATER_PUBLIC_KEY != '' && 1 || 3 }}
       matrix:
         include:
           - os: windows-latest
@@ -34,7 +34,25 @@ jobs:
       - run: npm test -- --runInBand
       - run: npm run build:web
       - run: npm run test:native
+      - name: Build manual-install package
+        if: vars.JOURNAL_UPDATER_PUBLIC_KEY == ''
+        run: npm run package -- ${{ matrix.args }}
+      - name: Verify Windows startup
+        if: runner.os == 'Windows' && vars.JOURNAL_UPDATER_PUBLIC_KEY == ''
+        run: node scripts/smoke-windows.cjs src-tauri/target/release/journal.exe
+      - name: Attach manual-install package
+        if: vars.JOURNAL_UPDATER_PUBLIC_KEY == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "$RUNNER_OS" in
+            Windows) gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/nsis/*.exe ;;
+            macOS) gh release upload "$GITHUB_REF_NAME" src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg ;;
+            Linux) gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/appimage/*.AppImage ;;
+          esac
       - name: Configure signed update artifacts
+        if: vars.JOURNAL_UPDATER_PUBLIC_KEY != ''
         env:
           JOURNAL_UPDATER_PUBLIC_KEY: ${{ vars.JOURNAL_UPDATER_PUBLIC_KEY }}
         run: >
@@ -42,6 +60,7 @@ jobs:
           if (!pubkey) throw Error('Set JOURNAL_UPDATER_PUBLIC_KEY for this release');
           require('fs').writeFileSync('src-tauri/release.conf.json', JSON.stringify({bundle:{createUpdaterArtifacts:true},plugins:{updater:{pubkey}}}));"
       - uses: tauri-apps/tauri-action@v1
+        if: vars.JOURNAL_UPDATER_PUBLIC_KEY != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOURNAL_UPDATER_PUBLIC_KEY: ${{ vars.JOURNAL_UPDATER_PUBLIC_KEY }}
