@@ -5,7 +5,7 @@ const toolingRequire = createRequire(
 
 module.exports = {
   roots: ['<rootDir>/src'],
-  moduleDirectories: ['node_modules', 'release/app/node_modules', 'src'],
+  moduleDirectories: ['node_modules', 'src'],
   moduleFileExtensions: ['js', 'jsx', 'ts', 'tsx', 'json'],
   moduleNameMapper: {
     '\\.svg\\?react$': '<rootDir>/.erb/mocks/svgComponentMock.js',

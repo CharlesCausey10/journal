@@ -12,7 +12,7 @@ linked root dependency without testing that resolution.
 
 `.erb/scripts/register.cjs`, ESLint, and Jest resolve their tools from
 this package explicitly. `npm exec tsc -- --noEmit` uses the root TypeScript 7
-compiler and checks both application and electron-vite configuration code.
+compiler and checks application code.
 
 To update tooling, run `npm --prefix .erb/tooling update` and commit its lockfile.
 Move the tools back to the root when their compiler API supports TypeScript 7.

@@ -20,7 +20,6 @@ import type {
 import { quoteForDate } from './dailyQuotes';
 import type { DailyQuote } from './dailyQuotes';
 import './App.css';
-import { flushJournal } from './desktop';
 import {
   CENTER_MIN_HEIGHT_PX,
   CENTER_MIN_WIDTH_PX,
@@ -91,9 +90,10 @@ interface BlockEditorProps {
   readOnly: boolean;
   moveCheckedToBottom: boolean;
   onSaved: (entry: Entry, requestedDate: string) => void;
+  autoFocusOnStartup?: boolean;
 }
 
-function BlockEditor({ block, entry, entryDate, readOnly, moveCheckedToBottom, onSaved }: BlockEditorProps) {
+function BlockEditor({ block, entry, entryDate, readOnly, moveCheckedToBottom, onSaved, autoFocusOnStartup = false }: BlockEditorProps) {
   const [content, setContent] = useState(
     entry?.content ?? (block.previousEntryBlockId === null ? block.templateContent : ''),
   );
@@ -195,6 +195,7 @@ function BlockEditor({ block, entry, entryDate, readOnly, moveCheckedToBottom, o
         </span>
       )}
       <MarkdownEditor
+        autoFocusOnStartup={autoFocusOnStartup}
         value={content}
         label={block.label}
         fontSizePx={block.fontSizePx}
@@ -432,23 +433,6 @@ function ResizeHandle({ axis, className, onResize }: ResizeHandleProps) {
 }
 
 function Home() {
-  const [exporting, setExporting] = useState(false);
-  const [exportMessage, setExportMessage] = useState('');
-  const exportForElectron = async () => {
-    setExporting(true);
-    setExportMessage('');
-    try {
-      await flushJournal();
-      const path = await window.__TAURI__.core.invoke<string | null>('journal_request', {
-        action: 'export:electron', input: null,
-      });
-      if (path) setExportMessage(`Saved your journal for Electron to ${path}`);
-    } catch (error) {
-      setExportMessage(`Could not export your journal. ${String(error)}`);
-    } finally {
-      setExporting(false);
-    }
-  };
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [entriesByBlock, setEntriesByBlock] = useState<Map<number, Entry>>(
     () => new Map(),
@@ -1064,6 +1048,7 @@ function Home() {
   };
 
   const centerBlocks = blocksForDate('center');
+  const startupFocusBlockId = centerBlocks.find((block) => block.previousEntryBlockId === null)?.id;
   const panelSettingsBlock = blocks.find((block) => block.id === selectedPanelSettingsId);
   const previousEntrySources = blocks.filter(
     (block) =>
@@ -1140,6 +1125,7 @@ function Home() {
                     />
                   ) : (
                     <BlockEditor
+                      autoFocusOnStartup={block.id === startupFocusBlockId}
                       block={block}
                       entry={entriesByBlock.get(block.id)}
                       entryDate={entryDate}
@@ -1173,7 +1159,7 @@ function Home() {
           {activeDialog && (
             <div className="dialog-layer">
               <button type="button" className="dialog-backdrop" aria-label="Close dialog" onClick={() => setActiveDialog(null)} />
-              <section className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+              <section className="app-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
                 <div className="dialog-heading">
                   <h2 id="dialog-title">Settings</h2>
                   <button type="button" aria-label="Close dialog" onClick={() => setActiveDialog(null)}>×</button>
@@ -1205,11 +1191,7 @@ function Home() {
                     Move checked items to the bottom of the checklist
                   </label>
                   {settingsError && <p className="dialog-error" role="alert">{settingsError}</p>}
-                  <button type="button" disabled={exporting} onClick={() => void exportForElectron()}>
-                    {exporting ? 'Exporting…' : 'Export journal for Electron'}
-                  </button>
-                  <p className="dialog-help">Save your latest writing and settings in a format the previous Electron app can open.</p>
-                  {exportMessage && <p role="status">{exportMessage}</p>}
+
                 </div>
               </section>
             </div>

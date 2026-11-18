@@ -164,6 +164,8 @@ describe('Journal app', () => {
     render(<App />);
     await screen.findByText('Morning notes');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('dialog')).toHaveClass('settings-dialog');
+    expect(screen.queryByText(/Export journal for Electron/)).not.toBeInTheDocument();
     const checkbox = screen.getByRole('checkbox', { name: 'Move checked items to the bottom of the checklist' });
     expect(checkbox).not.toBeChecked();
     await act(async () => { fireEvent.click(checkbox); });

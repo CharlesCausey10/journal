@@ -14,7 +14,6 @@ mod journal;
 mod storage;
 struct Store {
     directory: PathBuf,
-    legacy: Option<PathBuf>,
     db: Mutex<Option<rusqlite::Connection>>,
 }
 
@@ -43,16 +42,8 @@ async fn journal_request(
             .lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
         if action == "recovery:folder" {
-            let folder = if store.directory.join("backups").exists() {
-                store.directory.clone()
-            } else {
-                store
-                    .legacy
-                    .clone()
-                    .unwrap_or_else(|| store.directory.clone())
-            };
             app.opener()
-                .open_path(folder.to_string_lossy(), None::<&str>)?;
+                .open_path(store.directory.to_string_lossy(), None::<&str>)?;
             return Ok(serde_json::Value::Null);
         }
         if action == "recovery:restore" {
@@ -83,21 +74,7 @@ async fn journal_request(
             return Ok(serde_json::json!(false));
         }
         if db.is_none() {
-            *db = Some(storage::open(&store.directory, store.legacy.as_deref())?);
-        }
-        if action == "export:electron" {
-            let selected = app
-                .dialog()
-                .file()
-                .set_file_name("Journal-for-Electron.sqlite")
-                .add_filter("Journal database", &["sqlite"])
-                .blocking_save_file();
-            if let Some(file) = selected {
-                let path = file.into_path()?;
-                storage::export_for_electron(db.as_ref().unwrap(), &path)?;
-                return Ok(serde_json::json!(path));
-            }
-            return Ok(serde_json::Value::Null);
+            *db = Some(storage::open(&store.directory)?);
         }
         journal::request(db.as_mut().unwrap(), &action, &input)
     })
@@ -136,28 +113,6 @@ async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
-    // A recovery export can run even if the webview cannot start.
-    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == "--export-electron")
-    {
-        let result = if arguments.len() == 3 {
-            storage::export_file_for_electron(
-                std::path::Path::new(&arguments[1]),
-                std::path::Path::new(&arguments[2]),
-            )
-        } else {
-            Err(anyhow::anyhow!(
-                "Usage: Journal --export-electron SOURCE DESTINATION"
-            ))
-        };
-        if let Err(error) = result {
-            eprintln!("{error:#}");
-            std::process::exit(1);
-        }
-        return;
-    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -182,17 +137,9 @@ fn main() {
                         .plugin(tauri_plugin_updater::Builder::new().pubkey(key).build())?;
                 }
             }
-            let (directory, legacy) = match std::env::var_os("JOURNAL_SMOKE_TEST_DATA") {
-                Some(path) => (PathBuf::from(path), None),
-                None if cfg!(debug_assertions) => (app.path().app_data_dir()?, None),
-                None => {
-                    let root = app.path().config_dir()?;
-                    let legacy = ["journal", "Journal"]
-                        .into_iter()
-                        .map(|n| root.join(n))
-                        .find(|p| p.join("journal.sqlite").exists() || p.join("backups").exists());
-                    (app.path().app_data_dir()?, legacy)
-                }
+            let directory = match std::env::var_os("JOURNAL_SMOKE_TEST_DATA") {
+                Some(path) => PathBuf::from(path),
+                None => app.path().app_data_dir()?,
             };
             let config = &app.config().app.windows[0];
             let handle = app.handle().clone();
@@ -217,7 +164,6 @@ fn main() {
             };
             app.manage(Store {
                 directory,
-                legacy,
                 db: Mutex::new(None),
             });
             let ready = Arc::new(AtomicBool::new(false));

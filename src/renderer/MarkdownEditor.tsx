@@ -19,6 +19,7 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { CheckListPlugin } from '@lexical/react/LexicalCheckListPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import type { JSX } from 'react';
+import { $getRoot } from 'lexical';
 import { registerMoveCheckedToBottom } from './checklistOrder';
 
 export interface MarkdownEditorProps {
@@ -27,6 +28,7 @@ export interface MarkdownEditorProps {
   fontSizePx: number;
   readOnly: boolean;
   moveCheckedToBottom?: boolean;
+  autoFocusOnStartup?: boolean;
   onChange?: (markdown: string) => void;
   placeholder?: string;
 }
@@ -73,12 +75,27 @@ function ChecklistOrderPlugin({ enabled }: { enabled: boolean }) {
   return null;
 }
 
+function StartupFocusPlugin() {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    const focusAtEnd = () => {
+      if (!editor.isEditable()) return;
+      editor.getRootElement()?.focus({ preventScroll: true });
+      editor.update(() => { $getRoot().selectEnd(); }, { discrete: true });
+    };
+    window.addEventListener('journal-visible', focusAtEnd, { once: true });
+    return () => window.removeEventListener('journal-visible', focusAtEnd);
+  }, [editor]);
+  return null;
+}
+
 export default function MarkdownEditor({
   value,
   label,
   fontSizePx,
   readOnly,
   moveCheckedToBottom = false,
+  autoFocusOnStartup = false,
   onChange,
   placeholder,
 }: MarkdownEditorProps): JSX.Element {
@@ -129,6 +146,7 @@ export default function MarkdownEditor({
         />
         {!readOnly && (
           <>
+            {autoFocusOnStartup && <StartupFocusPlugin />}
             <HistoryPlugin />
             <ListPlugin />
             <CheckListPlugin disableTakeFocusOnClick />

@@ -25,10 +25,14 @@ window.addEventListener('journal-ready', () => {
   afterPaint(() => {
     void native.invoke('show_ready_window').then(() => {
       // First show the matching solid background, then fade in the loaded content.
-      afterPaint(() => { document.documentElement.dataset.startupState = 'visible'; });
+      afterPaint(() => {
+        document.documentElement.dataset.startupState = 'visible';
+        window.dispatchEvent(new Event('journal-visible'));
+      });
       return undefined;
     }).catch((error) => {
       document.documentElement.dataset.startupState = 'visible';
+      window.dispatchEvent(new Event('journal-visible'));
       console.error(error);
     });
   });

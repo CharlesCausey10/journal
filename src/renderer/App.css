@@ -1356,6 +1356,45 @@ html[data-startup-state="loading"] .journal-page {
   max-width: 260px;
 }
 
+.app-dialog.settings-dialog {
+  width: min(520px, 100%);
+  height: auto;
+  max-height: calc(100dvh - 32px);
+}
+
+.settings-dialog .dialog-heading {
+  padding: 16px 20px;
+}
+
+.settings-dialog .dialog-heading > button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 4px;
+}
+
+.settings-dialog .settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px;
+}
+
+.settings-dialog .settings-content > label:first-child {
+  max-width: none;
+  gap: 8px;
+}
+
+.settings-dialog select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(var(--theme-ink-rgb), 0.3);
+  border-radius: 4px;
+  font-size: inherit;
+}
+
 .color-scheme-setting {
   margin: 20px 0 0;
   padding: 10px;
@@ -1453,14 +1492,53 @@ html[data-startup-state="loading"] .journal-page {
 
 .settings-content .checklist-setting {
   display: flex;
-  align-items: center;
+  flex-direction: row;
+  align-items: flex-start;
   gap: 10px;
   max-width: none;
-  margin-top: 20px;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .checklist-setting input[type='checkbox'] {
   width: auto;
   flex: 0 0 auto;
   accent-color: var(--theme-ink);
+}
+
+.settings-dialog .color-scheme-setting {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-dialog .color-scheme-setting legend {
+  margin-bottom: 10px;
+  padding: 0;
+}
+
+.settings-dialog .color-scheme-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-dialog .color-scheme-options button {
+  padding: 0;
+}
+
+.settings-dialog .scheme-name-preview {
+  padding: 12px;
+  font-size: 0.85rem;
+}
+
+.settings-dialog .checklist-setting input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+@media (max-width: 420px) {
+  .settings-dialog .color-scheme-options { grid-template-columns: 1fr; }
 }

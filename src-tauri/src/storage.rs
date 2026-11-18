@@ -243,7 +243,7 @@ fn prepare(path: &Path, dir: &Path) -> Result<Connection> {
     super::journal::request(&mut db, "ready", &Value::Null)?;
     Ok(db)
 }
-pub fn open(dir: &Path, legacy: Option<&Path>) -> Result<Connection> {
+pub fn open(dir: &Path) -> Result<Connection> {
     fs::create_dir_all(dir)?;
     let path = dir.join(FILE);
     ensure!(
@@ -258,15 +258,6 @@ pub fn open(dir: &Path, legacy: Option<&Path>) -> Result<Connection> {
             "The active database is missing. Restore a backup to continue."
         );
         let staged = dir.join(format!("import-{}.sqlite", Uuid::new_v4()));
-        if let Some(old) = legacy {
-            check_history(old)?;
-            let source =
-                Connection::open_with_flags(old.join(FILE), OpenFlags::SQLITE_OPEN_READ_ONLY)
-                    .with_context(|| {
-                        format!("Could not open the original journal in {}", old.display())
-                    })?;
-            snapshot(&source, &staged)?;
-        }
         let db = prepare(&staged, dir)?;
         db.close().map_err(|(_, e)| e)?;
         fs::rename(&staged, &path)?;
@@ -317,46 +308,6 @@ pub fn restore(dir: &Path, selected: &Path) -> Result<()> {
     fs::remove_file(dir.join("restore-pending"))?;
     Ok(())
 }
-// Electron 1.1.3 reads schema 3. Only the checklist-order preference was added
-// in schema 4, so downgrade a separate verified snapshot for rollback.
-pub fn export_for_electron(source: &Connection, destination: &Path) -> Result<()> {
-    ensure!(!destination.try_exists()?, "Choose a new export filename");
-    let parent = destination.parent().context("Choose an export folder")?;
-    let staged = parent.join(format!(".journal-export-{}.sqlite", Uuid::new_v4()));
-    let result = (|| -> Result<()> {
-        snapshot(source, &staged)?;
-        let mut exported = Connection::open(&staged)?;
-        let version: i64 = exported.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        ensure!(
-            (3..=4).contains(&version),
-            "Export requires a schema 3 or 4 journal"
-        );
-        let tx = exported.transaction()?;
-        if version == 3 {
-            tx.execute_batch(CHECKLIST)?;
-        }
-        validate_schema(&tx)?;
-        tx.execute_batch("ALTER TABLE user_settings DROP COLUMN move_checked_to_bottom")?;
-        tx.pragma_update(None, "user_version", 3)?;
-        check(&tx)?;
-        tx.commit()?;
-        exported.close().map_err(|(_, error)| error)?;
-        fs::OpenOptions::new().write(true).open(&staged)?.sync_all()?;
-        // Hard-link publication refuses to overwrite an existing destination,
-        // including one created after the initial check.
-        fs::hard_link(&staged, destination)
-            .context("Could not save the export. Choose a new filename on a local disk")?;
-        Ok(())
-    })();
-    let _ = fs::remove_file(staged);
-    result
-}
-
-pub fn export_file_for_electron(source: &Path, destination: &Path) -> Result<()> {
-    let database = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    export_for_electron(&database, destination)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,102 +316,32 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn electron_export_preserves_new_writing_and_leaves_tauri_intact() -> Result<()> {
+    fn saved_entries_and_preferences_reopen_from_native_data_folder() -> Result<()> {
         let directory = tempdir()?;
-        let mut db = open(directory.path(), None)?;
+        let mut db = open(directory.path())?;
         request(
             &mut db,
             "entries:save",
             &json!({
-                "id":"written-in-tauri", "blockId":1, "entryDate":"2099-01-01",
-                "content":"New writing during the Tauri trial 🌿"
+                "id": "saved", "blockId": 1, "entryDate": "2099-01-01", "content": "Saved journal text"
             }),
         )?;
         request(&mut db, "settings:set-color-scheme", &json!("sage"))?;
-        request(&mut db, "settings:set-move-checked-to-bottom", &json!(true))?;
-        let output = directory.path().join("electron.sqlite");
-        export_for_electron(&db, &output)?;
-        let exported = Connection::open(&output)?;
+        drop(db);
+        let mut reopened = open(directory.path())?;
         assert_eq!(
-            exported.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            3
+            request(&mut reopened, "entries:get", &json!("saved"))?["content"],
+            "Saved journal text"
         );
         assert_eq!(
-            db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            4
-        );
-        assert_eq!(
-            exported.query_row(
-                "SELECT content FROM entries WHERE id='written-in-tauri'",
-                [],
-                |row| row.get::<_, String>(0)
-            )?,
-            "New writing during the Tauri trial 🌿"
-        );
-        assert_eq!(
-            exported.query_row("SELECT color_scheme FROM user_settings", [], |row| row
-                .get::<_, String>(
-                0
-            ))?,
+            request(&mut reopened, "layout:get", &Value::Null)?["colorScheme"],
             "sage"
         );
-        assert!(!columns(&exported, "user_settings")?
-            .iter()
-            .any(|name| name == "move_checked_to_bottom"));
-        assert_eq!(
-            request(&mut db, "layout:get", &Value::Null)?["moveCheckedToBottom"],
-            true
-        );
-        assert!(export_for_electron(&db, &output).is_err());
-        let second = directory.path().join("electron-again.sqlite");
-        export_for_electron(&exported, &second)?;
         Ok(())
     }
 
     #[test]
-    fn imports_live_wal_and_preserves_original_after_edits() -> Result<()> {
-        let root = tempdir()?;
-        let legacy = root.path().join("journal");
-        let native = root.path().join("native");
-        let mut original = open(&legacy, None)?;
-        let input =
-            json!({"id":"shared","blockId":1,"entryDate":"2099-01-01","content":"🌿 journal"});
-        request(&mut original, "entries:save", &input)?;
-        request(
-            &mut original,
-            "settings:set-move-checked-to-bottom",
-            &json!(true),
-        )?;
-        let mut imported = open(&native, Some(&legacy))?;
-        assert_eq!(
-            request(&mut imported, "entries:get", &json!("shared"))?["content"],
-            "🌿 journal"
-        );
-        assert_eq!(
-            request(&mut imported, "layout:get", &Value::Null)?["moveCheckedToBottom"],
-            true
-        );
-        let mut changed = input;
-        changed["content"] = json!("changed");
-        request(&mut imported, "entries:save", &changed)?;
-        assert_eq!(
-            request(&mut original, "entries:get", &json!("shared"))?["content"],
-            "🌿 journal"
-        );
-        drop(imported);
-        assert_eq!(
-            request(
-                &mut open(&native, Some(&legacy))?,
-                "entries:get",
-                &json!("shared")
-            )?["content"],
-            "changed"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn imports_all_legacy_versions_with_verified_snapshots() -> Result<()> {
+    fn upgrades_older_schemas_with_verified_snapshots() -> Result<()> {
         for version in [1, 2, 3] {
             let root = tempdir()?;
             let old = root.path().join("old");
@@ -473,13 +354,12 @@ mod tests {
             }
             db.pragma_update(None, "user_version", version)?;
             drop(db);
-            let native = root.path().join("new");
-            let mut db = open(&native, Some(&old))?;
+            let mut db = open(&old)?;
             assert_eq!(
                 request(&mut db, "entries:get", &json!("archived"))?["content"],
                 "previous journal"
             );
-            let folder = fs::read_dir(native.join("backups/tauri"))?
+            let folder = fs::read_dir(old.join("backups/tauri"))?
                 .next()
                 .unwrap()?
                 .path();
@@ -487,7 +367,7 @@ mod tests {
             assert_eq!(
                 Connection::open(old.join(FILE))?
                     .query_row("pragma user_version", [], |r| r.get::<_, i64>(0))?,
-                version
+                4
             );
         }
         Ok(())
@@ -496,7 +376,7 @@ mod tests {
     #[test]
     fn block_settings_history_and_layout_roundtrip() -> Result<()> {
         let root = tempdir()?;
-        let mut db = open(root.path(), None)?;
+        let mut db = open(root.path())?;
         let linked = request(
             &mut db,
             "blocks:add",
@@ -564,22 +444,24 @@ mod tests {
     #[test]
     fn failed_import_and_restore_do_not_replace_data() -> Result<()> {
         let root = tempdir()?;
-        let legacy = root.path().join("legacy");
-        fs::create_dir_all(&legacy)?;
-        fs::write(legacy.join(FILE), b"damaged")?;
+        let damaged = root.path().join("damaged");
+        fs::create_dir_all(&damaged)?;
+        fs::write(damaged.join(FILE), b"damaged")?;
         let dest = root.path().join("dest");
-        assert!(open(&dest, Some(&legacy)).is_err());
-        assert!(!dest.join(FILE).exists());
+        fs::create_dir_all(&dest)?;
+        fs::write(dest.join(FILE), b"damaged")?;
+        assert!(open(&dest).is_err());
+        fs::remove_file(dest.join(FILE))?;
         let backup = root.path().join("backup.sqlite");
-        let mut good = open(&dest, None)?;
+        let mut good = open(&dest)?;
         request(&mut good, "settings:set-color-scheme", &json!("sage"))?;
         snapshot(&good, &backup)?;
         drop(good);
-        assert!(restore(&dest, &legacy.join(FILE)).is_err());
+        assert!(restore(&dest, &damaged.join(FILE)).is_err());
         fs::write(dest.join(FILE), b"damaged")?;
         restore(&dest, &backup)?;
         assert_eq!(
-            request(&mut open(&dest, None)?, "layout:get", &Value::Null)?["colorScheme"],
+            request(&mut open(&dest)?, "layout:get", &Value::Null)?["colorScheme"],
             "sage"
         );
         let recovery = dest.join("backups/recovery");
@@ -593,15 +475,15 @@ mod tests {
     fn missing_damaged_and_future_journals_require_recovery() -> Result<()> {
         let root = tempdir()?;
         fs::write(root.path().join(FILE), [])?;
-        assert!(open(root.path(), None).is_err());
+        assert!(open(root.path()).is_err());
         assert_eq!(fs::metadata(root.path().join(FILE))?.len(), 0);
         let db = Connection::open(root.path().join(FILE))?;
         db.pragma_update(None, "user_version", 800)?;
         drop(db);
-        assert!(open(root.path(), None).is_err());
+        assert!(open(root.path()).is_err());
         fs::remove_file(root.path().join(FILE))?;
         fs::create_dir_all(root.path().join("backups"))?;
-        assert!(open(root.path(), None).is_err());
+        assert!(open(root.path()).is_err());
         assert!(!root.path().join(FILE).exists());
         Ok(())
     }

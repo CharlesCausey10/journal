@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '../renderer/App';
+import { $getSelection, $isRangeSelection, getNearestEditorFromDOMNode } from 'lexical';
+import type { RangeSelection } from 'lexical';
 import type { Block, Entry } from '../shared/journal';
 
 jest.mock('../renderer/dailyQuotes', () => ({
@@ -16,6 +18,13 @@ jest.requireMock('../renderer/MarkdownEditor.js');
 
 beforeEach(() => {
   jest.useFakeTimers({ now: new Date(2026, 9, 22, 12) });
+  // Lexical scrolls the focused caret into view. JSDOM has no range geometry.
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+    configurable: true, value: () => new DOMRect(),
+  });
+  Object.defineProperty(Range.prototype, 'getClientRects', {
+    configurable: true, value: () => [],
+  });
   const blocks: Block[] = ['Daily', 'Long-Term Goals', 'Reading'].map((label, index) => ({
     id: index + 1, label, placement: 'left', position: index,
     fontSizePx: 18, resetFrequency: index === 0 ? 'daily' : 'never',
@@ -93,4 +102,31 @@ test('waits for entry queries and populated editors before signaling startup rea
   } finally {
     window.removeEventListener('journal-ready', ready);
   }
+});
+
+test('focuses the first editable center editor once, with the caret after saved text', async () => {
+  const panels = await window.journal.blocks.list();
+  jest.mocked(window.journal.blocks.list).mockResolvedValue(panels.map((panel, index) => ({
+    ...panel, placement: index < 2 ? 'center' : 'right',
+    previousEntryBlockId: index === 0 ? 3 : null,
+  })));
+  render(<App />);
+  const editor = await screen.findByRole('textbox', { name: 'Long-Term Goals' });
+  const otherEditor = screen.getByRole('textbox', { name: 'Reading' });
+  expect(editor).toHaveTextContent('Long-Term Goals persistent content');
+  await act(async () => { window.dispatchEvent(new Event('journal-visible')); });
+  expect(editor).toHaveFocus();
+  const lexicalEditor = getNearestEditorFromDOMNode(editor);
+  expect(lexicalEditor).toBeDefined();
+  lexicalEditor!.getEditorState().read(() => {
+    const selection = $getSelection();
+    expect($isRangeSelection(selection)).toBe(true);
+    const range = selection as RangeSelection;
+    expect(range.isCollapsed()).toBe(true);
+    expect(range.anchor.getNode().getTextContent()).toBe('Long-Term Goals persistent content');
+    expect(range.anchor.offset).toBe('Long-Term Goals persistent content'.length);
+  });
+  otherEditor.focus();
+  await act(async () => { window.dispatchEvent(new Event('journal-visible')); });
+  expect(otherEditor).toHaveFocus();
 });
